@@ -206,6 +206,9 @@ set(CODON_HPPFILES
   codon/parser/ctx.h
   codon/parser/peg/peg.h
   codon/parser/peg/rules.h
+  codon/parser/tok/parser.h
+  codon/parser/tok/parser_base.h
+  codon/parser/tok/tokenizer.h
   codon/parser/visitors/doc/doc.h
   codon/parser/visitors/format/format.h
   codon/parser/visitors/scoping/scoping.h
@@ -305,6 +308,8 @@ set(CODON_CPPFILES
   codon/parser/match.cpp
   codon/parser/common.cpp
   codon/parser/peg/peg.cpp
+  codon/parser/tok/parser.cpp
+  codon/parser/tok/tokenizer.cpp
   codon/parser/visitors/doc/doc.cpp
   codon/parser/visitors/format/format.cpp
   codon/parser/visitors/scoping/scoping.cpp

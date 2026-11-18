@@ -1,0 +1,642 @@
+# Codon's grammar (codon/parser/peg/grammar.peg) over the tokens of codon::tok, for generate.py.
+# Each rule follows the rule of the same name in grammar.peg and builds the same AST. Differences in the notation:
+# - SPACE (required whitespace) is SP; _ (optional whitespace) is gone, as the tokens carry no whitespace.
+# - SAMEDENT, INDENT and DEDENT are tokens, so are blank lines and comments gone.
+# - tlist(c, e) is c.e+ [c]; list(c, e) is c.e+.
+# - An augmented assignment operator such as += is one token.
+
+@preamble {{
+// HARD_KEYWORDS: False else import pass None break except in raise True class finally is return and continue for as lambda try def from while assert del global not with elif if or yield async await
+#include "codon/parser/tok/parser_base.h"
+#include <any>
+#include <tuple>
+
+namespace codon::tokparser {
+using namespace codon::ast;
+
+#define aste(T, s, ...) setSI<Expr>(CTX.cache->N<T##Expr>(__VA_ARGS__), s)
+#define asts(T, s, ...) setSI<Stmt>(CTX.cache->N<T##Stmt>(__VA_ARGS__), s)
+
+template <typename T> T *setSI(ASTNode *n, const codon::SrcInfo &s) {
+  n->setSrcInfo(s);
+  return (T *)n;
+}
+
+using FromId = std::tuple<Expr *, std::vector<Param>, Expr *, bool>;
+using FromAs = std::pair<FromId, std::string>;
+using ExprPair = std::pair<Expr *, Expr *>;
+using OpExpr = std::pair<std::string, Expr *>;
+using ClassArgs = std::pair<std::vector<Param>, std::vector<Expr *>>;
+using StmtPair = std::pair<Stmt *, Stmt *>;
+using CondSuite = std::pair<Expr *, Stmt *>;
+
+struct PrimaryTail {
+  int kind; // 0 attribute, 1 generator argument, 2 arguments, 3 index
+  std::string name;
+  Expr *expr = nullptr;
+  std::vector<CallArg> args;
+};
+
+inline Expr *wrapTuple(ParseContext &CTX, std::vector<Expr *> items, bool trailingComma, const SrcInfo &LOC) {
+  if (items.size() == 1 && !trailingComma)
+    return items[0];
+  return aste(Tuple, LOC, std::move(items));
+}
+
+inline Expr *chain(ParseContext &CTX, Expr *first, const std::vector<OpExpr> &rest, const SrcInfo &LOC) {
+  Expr *b = first;
+  for (auto &[op, e] : rest)
+    b = aste(Binary, LOC, b, op, e);
+  return b;
+}
+
+/// A NUMBER token as INT (BININT, HEXINT, DECINT) or FLOAT (PTFLOAT, EXPFLOAT).
+inline bool isFloatText(std::string_view t) {
+  if (t.size() > 1 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X' || t[1] == 'b' || t[1] == 'B'))
+    return false;
+  return t.find_first_of(".eE") != std::string_view::npos;
+}
+
+struct ParserBase;
+} // namespace codon::tokparser
+}}
+
+program[Stmt *]:
+    | s=statements ENDMARKER { s }
+    | ENDMARKER { asts(Suite, LOC) }
+
+statements[Stmt *]:
+    | s=statement+ {{
+        auto r = asts(Suite, LOC, s);
+        cast<SuiteStmt>(r)->flatten();
+        return r;
+    }}
+statement[Stmt *]: compound_stmt | simple_stmt
+simple_stmt[Stmt *]:
+    | s=';'.small_stmt+ [';'] NEWLINE {{
+        auto r = asts(Suite, LOC, s);
+        cast<SuiteStmt>(r)->flatten();
+        return r;
+    }}
+end_of_small[bool]: SP | ';' | NEWLINE
+small_stmt[Stmt *]:
+    | directive
+    | assignment
+    | 'pass' &end_of_small { asts(Suite, LOC) }
+    | 'break' &end_of_small { asts(Break, LOC) }
+    | 'continue' &end_of_small { asts(Continue, LOC) }
+    | global_stmt
+    | nonlocal_stmt
+    | s=yield_stmt &end_of_small { s }
+    | assert_stmt
+    | del_stmt
+    | s=return_stmt &end_of_small { s }
+    | s=raise_stmt &end_of_small { s }
+    | print_stmt
+    | import_stmt
+    | e=expressions &(';' | NEWLINE) { asts(Expr, LOC, e) }
+    | custom_small_stmt
+
+assignment[Stmt *]:
+    | v=id ':' t=expression r=['=' x=star_expressions {<Expr *> x}] { asts(Assign, LOC, v, r ? *r : nullptr, t) }
+    | v=primary ':' t=expression r=['=' x=star_expressions {<Expr *> x}] { asts(Assign, LOC, v, r ? *r : nullptr, t) }
+    | ts=(t=star_targets !'==' '=' {<Expr *> t})+ e=star_expressions !'=' {{
+        ts.push_back(e);
+        std::vector<Stmt *> stmts;
+        for (int i = int(ts.size()) - 2; i >= 0; i--)
+          stmts.push_back(asts(Assign, LOC, ts[i], ts[i + 1]));
+        return asts(Suite, LOC, std::move(stmts));
+    }}
+    | e=star_expression op=augassign ~ r=star_expressions {
+        asts(Assign, LOC, e, aste(Binary, LOC, clone(e), op, r, true))
+    }
+augassign[std::string]:
+    | '+=' { "+" } | '-=' { "-" } | '**=' { "**" } | '*=' { "*" } | '@=' { "@" } | '//=' { "//" } | '/=' { "/" }
+    | '%=' { "%" } | '&=' { "&" } | '|=' { "|" } | '^=' { "^" } | '<<=' { "<<" } | '>>=' { ">>" }
+global_stmt[Stmt *]:
+    | 'global' SP ns=','.name+ [','] {{
+        std::vector<Stmt *> v;
+        for (auto &n : ns) v.push_back(asts(Global, LOC, n, false));
+        return asts(Suite, LOC, std::move(v));
+    }}
+nonlocal_stmt[Stmt *]:
+    | "nonlocal" SP ns=','.name+ [','] {{
+        std::vector<Stmt *> v;
+        for (auto &n : ns) v.push_back(asts(Global, LOC, n, true));
+        return asts(Suite, LOC, std::move(v));
+    }}
+yield_stmt[Stmt *]:
+    | 'yield' SP 'from' SP e=expression { asts(YieldFrom, LOC, e) }
+    | 'yield' e=[SP x=expressions {<Expr *> x}] { asts(Yield, LOC, e ? *e : nullptr) }
+assert_stmt[Stmt *]:
+    | 'assert' SP e=expression m=[',' x=expression {<Expr *> x}] { asts(Assert, LOC, e, m ? *m : nullptr) }
+del_stmt[Stmt *]:
+    | 'del' SP es=','.expression+ [','] {{
+        std::vector<Stmt *> v;
+        for (auto *e : es) v.push_back(asts(Del, LOC, e));
+        return asts(Suite, LOC, std::move(v));
+    }}
+return_stmt[Stmt *]:
+    | 'return' e=[SP x=expressions {<Expr *> x}] { asts(Return, LOC, e ? *e : nullptr) }
+raise_stmt[Stmt *]:
+    | 'raise' SP e=expression f=[SP 'from' SP x=expression {<Expr *> x}] { asts(Throw, LOC, e, f ? *f : nullptr) }
+    | 'raise' { asts(Throw, LOC, nullptr) }
+print_stmt[Stmt *]:
+    | "print" SP es=','.star_expression+ c=[','] { asts(Print, LOC, es, c.has_value()) }
+    | "print" &NEWLINE { asts(Print, LOC, std::vector<Expr *>{}, false) }
+import_stmt[Stmt *]: import_name | import_from
+import_name[Stmt *]:
+    | 'import' SP ns=','.as_name+ {{
+        std::vector<Stmt *> v;
+        for (auto &[e, as] : ns) v.push_back(asts(Import, LOC, e, nullptr, std::vector<Param>{}, nullptr, as));
+        return asts(Suite, LOC, std::move(v));
+    }}
+as_name[std::pair<Expr *, std::string>]:
+    | d=dot_name a=[SP 'as' SP n=name {<std::string> n}] { std::make_pair(d, a ? *a : std::string()) }
+dots[int]:
+    | ds=('.' {<int> 1} | '...' {<int> 3})* {{ int n = 0; for (int d : ds) n += d; return n; }}
+import_from[Stmt *]:
+    | 'from' SP n=dots d=[dot_name] SP 'import' SP '*' {
+        asts(Import, LOC, d ? *d : nullptr, aste(Id, LOC, "*"), std::vector<Param>{}, nullptr, "", n)
+    }
+    | 'from' SP n=dots d=[dot_name] SP 'import' SP items=from_as_list {{
+        Expr *f = d ? *d : nullptr;
+        std::vector<Stmt *> v;
+        for (auto &[t, as] : items)
+          v.push_back(asts(Import, LOC, f, std::get<0>(t), std::get<1>(t), std::get<2>(t), as, n, std::get<3>(t)));
+        return asts(Suite, LOC, std::move(v));
+    }}
+from_as_list[std::vector<FromAs>]: from_as_parens | from_as_items
+from_as_parens[std::vector<FromAs>]: '(' xs=','.from_as+ [','] ')' { xs }
+from_as_items[std::vector<FromAs>]: xs=','.from_as+ { xs }
+from_as[FromAs]:
+    | f=from_id a=[SP 'as' SP n=name {<std::string> n}] { FromAs(f, a ? *a : std::string()) }
+from_id[FromId]:
+    | d=dot_name ':' e=expression { FromId(d, std::vector<Param>(), e, false) }
+    | d=dot_name p=from_params r=['->' x=expression {<Expr *> x}] {
+        FromId(d, p, r ? *r : aste(Id, LOC, "NoneType"), true)
+    }
+    | d=dot_name { FromId(d, std::vector<Param>{}, (Expr *)nullptr, true) }
+dot_name[Expr *]:
+    | i=id ns=('.' n=name {<std::string> n})* {{
+        Expr *e = i;
+        for (auto &n : ns) e = aste(Dot, LOC, e, n);
+        return e;
+    }}
+from_params[std::vector<Param>]:
+    | '(' ps=[x=','.from_param+ [','] {<std::vector<Param>> x}] ')' { ps ? *ps : std::vector<Param>{} }
+from_param[Param]: e=expression { Param(LOC, "", e, nullptr) }
+
+suite[Stmt *]:
+    | simple_stmt
+    | NEWLINE INDENT s=statements DEDENT { s }
+compound_stmt[Stmt *]:
+    | function | if_stmt | class_ | with_stmt_async | for_ | try_stmt | while_stmt | match_stmt | custom_stmt
+if_stmt[Stmt *]:
+    | 'if' SP c=named_expression ':' s=suite
+      elifs=('elif' SP c2=named_expression ':' s2=suite {<CondSuite> CondSuite(c2, s2)})*
+      el=['else' ':' x=suite {<Stmt *> x}] {{
+        Stmt *lastElse = el ? SuiteStmt::wrap(*el) : nullptr;
+        for (size_t i = elifs.size(); i-- > 0;)
+          lastElse = asts(If, LOC, elifs[i].first, SuiteStmt::wrap(elifs[i].second), SuiteStmt::wrap(lastElse));
+        return asts(If, LOC, c, SuiteStmt::wrap(s), SuiteStmt::wrap(lastElse));
+    }}
+while_stmt[Stmt *]:
+    | 'while' SP c=named_expression ':' s=suite el=['else' (SP 'not' SP "break")* ':' x=suite {<Stmt *> x}] {
+        asts(While, LOC, c, s, el ? *el : nullptr)
+    }
+for_[Stmt *]:
+    | d=decorator f=for_stmt_async {{
+        auto s = (ForStmt *)f;
+        s->setDecorator(d);
+        return (Stmt *)s;
+    }}
+    | for_stmt_async
+for_stmt_async[Stmt *]:
+    | 'async' SP f=for_stmt {{
+        auto s = (ForStmt *)f;
+        s->setAsync();
+        return (Stmt *)s;
+    }}
+    | for_stmt
+for_stmt[Stmt *]:
+    | 'for' SP t=star_targets SP 'in' SP e=star_expressions ':' s=suite
+      el=['else' (SP 'not' SP "break")* ':' x=suite {<Stmt *> x}] {
+        asts(For, LOC, t, e, s, el ? *el : nullptr)
+    }
+with_stmt_async[Stmt *]:
+    | 'async' SP w=with_stmt {{
+        auto s = (WithStmt *)w;
+        s->setAsync();
+        return (Stmt *)s;
+    }}
+    | with_stmt
+with_stmt[Stmt *]:
+    | 'with' SP items=with_items ':' s=suite { asts(With, LOC, items, s, false) }
+with_items[std::vector<ExprPair>]: with_parens_item | with_item
+with_parens_item[std::vector<ExprPair>]: '(' xs=','.as_item+ [','] ')' { xs }
+with_item[std::vector<ExprPair>]: xs=','.as_item+ { xs }
+as_item[ExprPair]:
+    | e=expression SP 'as' SP i=id &(',' | ')' | ':') { ExprPair(e, i) }
+    | e=expression { ExprPair(e, nullptr) }
+try_stmt[Stmt *]:
+    | 'try' ':' s=suite ex=excepts ef=[else_finally] {{
+        StmtPair p{nullptr, nullptr};
+        if (ef) p = *ef;
+        return asts(Try, LOC, s, ex, p.first, p.second);
+    }}
+    | 'try' ':' s=suite f=['finally' ':' x=suite {<Stmt *> x}] {
+        asts(Try, LOC, s, std::vector<ExceptStmt *>{}, nullptr, f ? *f : nullptr)
+    }
+else_finally[StmtPair]:
+    | 'else' ':' a=suite 'finally' ':' b=suite { StmtPair(a, b) }
+    | 'else' ':' a=suite { StmtPair(a, nullptr) }
+    | 'finally' ':' b=suite { StmtPair(nullptr, b) }
+excepts[std::vector<ExceptStmt *>]: xs=except_block+ { xs }
+except_block[ExceptStmt *]:
+    | 'except' SP e=expression n=[SP 'as' SP x=name {<std::string> x}] ':' s=suite {
+        setSI<ExceptStmt>(CTX.cache->N<ExceptStmt>(n ? *n : std::string(), e, s), LOC)
+    }
+    | 'except' ':' s=suite { setSI<ExceptStmt>(CTX.cache->N<ExceptStmt>("", nullptr, s), LOC) }
+function[Stmt *]:
+    | ds=extern_decorators f=function_def_async NEWLINE x=EXTERN {{
+        auto fn = (FunctionStmt *)f;
+        fn->setDecorators(ds);
+        fn->setSuite(SuiteStmt::wrap(asts(Expr, LOC, aste(String, LOC, str(x)))));
+        return (Stmt *)fn;
+    }}
+    | ds=[decorators] f=function_def_async s=suite {{
+        auto fn = (FunctionStmt *)f;
+        if (ds)
+          fn->setDecorators(*ds);
+        fn->setSuite(SuiteStmt::wrap(s));
+        return (Stmt *)fn;
+    }}
+extern_kind[std::string]: "llvm" { "llvm" } | "python" { "python" }
+extern_decorators[std::vector<Expr *>]:
+    | a=[decorators] '@' k=extern_kind NEWLINE b=[decorators] {{
+        std::vector<Expr *> vs{aste(Id, LOC, k)};
+        if (a) vs.insert(vs.end(), a->begin(), a->end());
+        if (b) vs.insert(vs.end(), b->begin(), b->end());
+        return vs;
+    }}
+function_def_async[Stmt *]:
+    | 'async' SP f=function_def {{
+        auto fn = (FunctionStmt *)f;
+        fn->setAsync();
+        return (Stmt *)fn;
+    }}
+    | function_def
+function_def[Stmt *]:
+    | 'def' SP n=name g=generics p=params r=['->' x=expression {<Expr *> x}] ':' {{
+        auto all = p;
+        for (auto &q : g) all.push_back(q);
+        return asts(Function, LOC, n, r ? *r : nullptr, all, nullptr);
+    }}
+    | 'def' SP n=name p=params r=['->' x=expression {<Expr *> x}] ':' {
+        asts(Function, LOC, n, r ? *r : nullptr, p, nullptr)
+    }
+params[std::vector<Param>]:
+    | '(' ps=[x=','.param+ [','] {<std::vector<Param>> x}] ')' { ps ? *ps : std::vector<Param>{} }
+param[Param] (memo):
+    | n=param_name ':' t=expression d=['=' x=expression {<Expr *> x}] { Param(LOC, n, t, d ? *d : nullptr) }
+    | n=param_name d=['=' x=expression {<Expr *> x}] { Param(LOC, n, nullptr, d ? *d : nullptr) }
+param_name[std::string] (memo):
+    | s=['**' {<std::string> "**"} | '*' {<std::string> "*"}] n=name { (s ? *s : std::string()) + n }
+generics[std::vector<Param>] (memo):
+    | '[' ps=','.param+ [','] ']' {{
+        std::vector<Param> params;
+        for (auto v : ps) {
+          v.status = Param::Generic;
+          if (!v.type) v.type = aste(Id, LOC, "type");
+          params.push_back(v);
+        }
+        return params;
+    }}
+decorators[std::vector<Expr *>]: ds=decorator+ { ds }
+decorator[Expr *]:
+    | '@' !(extern_kind NEWLINE) e=named_expression NEWLINE { e }
+class_[Stmt *]:
+    | d=decorators c=class_def {{
+        cast<ClassStmt>(c)->setDecorators(d);
+        return c;
+    }}
+    | class_def
+base_class_args[std::vector<Expr *>]:
+    | '(' xs=[x=','.expression+ [','] {<std::vector<Expr *>> x}] ')' { xs ? *xs : std::vector<Expr *>{} }
+class_args[ClassArgs]:
+    | g=generics b=base_class_args { ClassArgs(g, b) }
+    | g=generics { ClassArgs(g, std::vector<Expr *>{}) }
+    | b=base_class_args { ClassArgs(std::vector<Param>{}, b) }
+class_def[Stmt *]:
+    | 'class' SP n=name a=[class_args] ':' s=suite {{
+        std::vector<Param> generics;
+        std::vector<Expr *> baseClasses;
+        if (a)
+          std::tie(generics, baseClasses) = *a;
+        std::vector<Param> args;
+        auto suite = (SuiteStmt *)(asts(Suite, LOC));
+        auto ss = cast<SuiteStmt>(s);
+        seqassertn(ss, "not a suite");
+        for (auto *i : *ss) {
+          if (auto as = cast<AssignStmt>(i))
+            if (auto ei = cast<IdExpr>(as->getLhs())) {
+              args.push_back(Param(as->getSrcInfo(), ei->getValue(), as->getTypeExpr(), as->getRhs()));
+              continue;
+            }
+          suite->addStmt(i);
+        }
+        suite->flatten();
+        for (auto &p : generics)
+          args.push_back(p);
+        return asts(Class, LOC, n, std::move(args), suite, std::vector<Expr *>{}, baseClasses);
+    }}
+match_stmt[Stmt *]:
+    | "match" SP e=expression ':' NEWLINE INDENT cs=case_+ DEDENT { asts(Match, LOC, e, cs) }
+case_[MatchCase]:
+    | "case" SP e=expression SP 'if' SP g=pipe ':' s=suite { MatchCase{e, g, s} }
+    | "case" SP e=expression ':' s=suite { MatchCase{e, nullptr, s} }
+custom_stmt[Stmt *]:
+    | n=name ?{CTX.hasCustomStmtKeyword(n, true)} SP e=expression ':' s=suite { asts(Custom, LOC, n, e, s) }
+    | n=name ?{CTX.hasCustomStmtKeyword(n, false)} ':' s=suite { asts(Custom, LOC, n, nullptr, s) }
+custom_small_stmt[Stmt *]:
+    | n=name ?{CTX.hasCustomExprStmt(n)} SP e=expressions { asts(Custom, LOC, n, e, nullptr) }
+directive[Stmt *]:
+    | d=DIRECTIVE {{
+        // ## codon: name = value
+        auto t = text(d);
+        size_t p = t.find(':') + 1;
+        auto skip = [&] { while (p < t.size() && (t[p] == ' ' || t[p] == '\t')) ++p; };
+        auto word = [&] { size_t b = p; while (p < t.size() && (isalnum(t[p]) || t[p] == '_')) ++p; return std::string(t.substr(b, p - b)); };
+        skip();
+        auto key = word();
+        skip();
+        ++p; // =
+        skip();
+        auto value = word();
+        return asts(Directive, LOC, key, value);
+    }}
+
+# Expressions
+
+expressions[Expr *]: xs=','.expression+ c=[','] { wrapTuple(CTX, xs, c.has_value(), LOC) }
+expression[Expr *] (memo):
+    | lambdef
+    | a=disjunction 'if' c=disjunction 'else' b=expression { aste(If, LOC, c, a, b) }
+    | pipe
+lambdef[Expr *]:
+    | 'lambda' SP ps=lparams ':' e=expression { aste(Lambda, LOC, ps, e) }
+    | 'lambda' ':' e=expression { aste(Lambda, LOC, std::vector<Param>{}, e) }
+lparams[std::vector<Param>]:
+    | ps=[x=','.lparam+ [','] {<std::vector<Param>> x}] { ps ? *ps : std::vector<Param>{} }
+lparam[Param]:
+    | n=param_name d=['=' x=expression {<Expr *> x}] { Param(LOC, n, nullptr, d ? *d : nullptr) }
+pipe_op[std::string]: '|>' { "|>" } | '||>' { "||>" }
+pipe[Expr *]:
+    | a=disjunction rest=(o=pipe_op b=disjunction {<OpExpr> OpExpr(o, b)})+ {{
+        std::vector<Pipe> v{Pipe{"", a}};
+        for (auto &[o, b] : rest) v.push_back(Pipe{o, b});
+        return aste(Pipe, LOC, std::move(v));
+    }}
+    | disjunction
+disjunction[Expr *] (memo):
+    | a=conjunction rest=('or' b=conjunction {<Expr *> b})+ {{
+        Expr *e = a;
+        for (auto *b : rest) e = aste(Binary, LOC, e, "||", b);
+        return e;
+    }}
+    | conjunction
+conjunction[Expr *] (memo):
+    | a=inversion rest=('and' b=inversion {<Expr *> b})+ {{
+        Expr *e = a;
+        for (auto *b : rest) e = aste(Binary, LOC, e, "&&", b);
+        return e;
+    }}
+    | inversion
+inversion[Expr *] (memo):
+    | 'not' SP i=inversion { aste(Unary, LOC, "!", i) }
+    | comparison
+comparison[Expr *]:
+    | a=bitwise_or ops=compare_op_bitwise_or* {{
+        if (ops.empty())
+          return a;
+        if (ops.size() == 1)
+          return aste(Binary, LOC, a, ops[0].first, ops[0].second);
+        std::vector<OpExpr> v{OpExpr(std::string(), a)};
+        v.insert(v.end(), ops.begin(), ops.end());
+        return aste(ChainBinary, LOC, std::move(v));
+    }}
+compare_op_bitwise_or[OpExpr]:
+    | SP 'not' SP 'in' SP b=bitwise_or { OpExpr("not in", b) }
+    | SP 'is' SP 'not' SP b=bitwise_or { OpExpr("is not", b) }
+    | SP 'in' SP b=bitwise_or { OpExpr("in", b) }
+    | SP 'is' SP b=bitwise_or { OpExpr("is", b) }
+    | o=('==' | '!=' | '<=' | '<' | '>=' | '>') b=bitwise_or { OpExpr(str(o), b) }
+bitwise_or[Expr *]:
+    | a=bitwise_xor rest=(o='|' b=bitwise_xor {<OpExpr> OpExpr(str(o), b)})* { chain(CTX, a, rest, LOC) }
+bitwise_xor[Expr *]:
+    | a=bitwise_and rest=(o='^' b=bitwise_and {<OpExpr> OpExpr(str(o), b)})* { chain(CTX, a, rest, LOC) }
+bitwise_and[Expr *]:
+    | a=shift_expr rest=(o='&' b=shift_expr {<OpExpr> OpExpr(str(o), b)})* { chain(CTX, a, rest, LOC) }
+shift_expr[Expr *]:
+    | a=sum rest=(o=('<<' | '>>') b=sum {<OpExpr> OpExpr(str(o), b)})* { chain(CTX, a, rest, LOC) }
+sum[Expr *]:
+    | a=term rest=(o=('+' | '-') b=term {<OpExpr> OpExpr(str(o), b)})* { chain(CTX, a, rest, LOC) }
+term[Expr *]:
+    | a=factor rest=(o=('*' | '//' | '/' | '%' | '@') b=factor {<OpExpr> OpExpr(str(o), b)})* {
+        chain(CTX, a, rest, LOC)
+    }
+factor[Expr *]:
+    | o=('+' | '-' | '~') f=factor { aste(Unary, LOC, str(o), f) }
+    | power
+power[Expr *]:
+    | a=await_primary '**' f=factor { aste(Binary, LOC, a, "**", f) }
+    | await_primary
+await_primary[Expr *] (memo):
+    | 'await' SP p=primary { aste(Await, LOC, p) }
+    | primary
+primary[Expr *] (memo):
+    | a=atom tails=primary_tail* {{
+        Expr *e = a;
+        for (auto &t : tails) {
+          if (t.kind == 0)
+            e = aste(Dot, LOC, e, t.name);
+          else if (t.kind == 1)
+            e = aste(Call, LOC, e, t.expr);
+          else if (t.kind == 2)
+            e = aste(Call, LOC, e, t.args);
+          else
+            e = aste(Index, LOC, e, t.expr);
+        }
+        return e;
+    }}
+primary_tail[PrimaryTail]:
+    | '.' n=name { PrimaryTail{0, n, nullptr, {}} }
+    | g=genexp { PrimaryTail{1, "", g, {}} }
+    | a=arguments { PrimaryTail{2, "", nullptr, a} }
+    | s=slices { PrimaryTail{3, "", s, {}} }
+slices[Expr *]: '[' xs=','.slice+ c=[','] ']' { wrapTuple(CTX, xs, c.has_value(), LOC) }
+slice[Expr *]:
+    | a=slice_part ':' b=slice_part c=[':' x=slice_part {<Expr *> x}] { aste(Slice, LOC, a, b, c ? *c : nullptr) }
+    | expression
+slice_part[Expr *]: e=[expression] { e ? *e : nullptr }
+string[StringExpr::String]:
+    | t=STRING {{
+        auto s = text(t);
+        size_t q = s.find_first_of("\"'");
+        std::string prefix(s.substr(0, q));
+        size_t quote = s.substr(q, 3) == "\"\"\"" || s.substr(q, 3) == "'''" ? 3 : 1;
+        auto p = StringExpr::String(std::string(s.substr(q + quote, s.size() - q - 2 * quote)), prefix);
+        if (p.prefix != "r" && p.prefix != "R") {
+          try {
+            p.value = unescape(p.value);
+          } catch (std::invalid_argument &) {
+            throw ParseError{"invalid code in a string", t};
+          } catch (std::out_of_range &) {
+            throw ParseError{"invalid code in a string", t};
+          }
+        } else {
+          p.prefix = "";
+        }
+        return p;
+    }}
+int_lit[std::string]: t=NUMBER ?{!isFloatText(text(t))} { str(t) }
+float_lit[std::string]: t=NUMBER ?{isFloatText(text(t))} { str(t) }
+atom[Expr *]:
+    | s=string rest=(SP x=string {<StringExpr::String> x})* {{
+        std::vector<StringExpr::String> v{s};
+        v.insert(v.end(), rest.begin(), rest.end());
+        return aste(String, LOC, v);
+    }}
+    | id
+    | 'True' { aste(Bool, LOC, true) }
+    | 'False' { aste(Bool, LOC, false) }
+    | 'None' { aste(None, LOC) }
+    | a=int_lit '...' b=int_lit { aste(Range, LOC, aste(Int, LOC, a), aste(Int, LOC, b)) }
+    | f=float_lit s=[NOSP n=name {<std::string> n}] { aste(Float, LOC, f, s ? *s : std::string()) }
+    | i=int_lit s=[NOSP n=name {<std::string> n}] { aste(Int, LOC, i, s ? *s : std::string()) }
+    | parentheses
+    | '...' { aste(Ellipsis, LOC) }
+parentheses[Expr *]:
+    | tuple | yield_ | named | genexp | listexpr | listcomp | dict | set | dictcomp | setcomp
+tuple[Expr *]:
+    | '(' ')' { aste(Tuple, LOC, std::vector<Expr *>{}) }
+    | '(' xs=','.star_named_expression+ c=[','] ')' { wrapTuple(CTX, xs, c.has_value(), LOC) }
+yield_[Expr *]: '(' 'yield' ')' { aste(Yield, LOC) }
+named[Expr *]: '(' e=named_expression ')' { e }
+genexp[Expr *] (memo):
+    | '(' e=named_expression SP f=for_if_clauses ')' {
+        aste(Generator, LOC, CTX.cache, GeneratorExpr::Generator, e, f)
+    }
+listexpr[Expr *]:
+    | '[' xs=[x=','.star_named_expression+ [','] {<std::vector<Expr *>> x}] ']' {
+        aste(List, LOC, xs ? *xs : std::vector<Expr *>{})
+    }
+listcomp[Expr *]:
+    | '[' e=named_expression SP f=for_if_clauses ']' {
+        aste(Generator, LOC, CTX.cache, GeneratorExpr::ListGenerator, e, f)
+    }
+set[Expr *]: '{' xs=','.star_named_expression+ [','] '}' { aste(Set, LOC, xs) }
+setcomp[Expr *]:
+    | '{' e=named_expression SP f=for_if_clauses '}' {
+        aste(Generator, LOC, CTX.cache, GeneratorExpr::SetGenerator, e, f)
+    }
+dict[Expr *]:
+    | '{' xs=[x=','.double_starred_kvpair+ [','] {<std::vector<Expr *>> x}] '}' {
+        aste(Dict, LOC, xs ? *xs : std::vector<Expr *>{})
+    }
+dictcomp[Expr *]:
+    | '{' p=kvpair SP f=for_if_clauses '}' {
+        aste(Generator, LOC, CTX.cache, (*cast<TupleExpr>(p))[0], (*cast<TupleExpr>(p))[1], f)
+    }
+double_starred_kvpair[Expr *]:
+    | '**' b=bitwise_or { aste(KeywordStar, LOC, b) }
+    | kvpair
+kvpair[Expr *]: a=expression ':' b=expression { aste(Tuple, LOC, std::vector<Expr *>{a, b}) }
+for_if_clauses[std::vector<Stmt *>]:
+    | a=for_if_clause_async rest=(SP x=for_if_clause_async {<std::vector<Stmt *>> x})* {{
+        auto v = a;
+        for (auto &t : rest) v.insert(v.end(), t.begin(), t.end());
+        return v;
+    }}
+for_if_clause_async[std::vector<Stmt *>]:
+    | 'async' SP c=for_if_clause {{
+        auto s = c;
+        if (!s.empty() && cast<ForStmt>(s.front()))
+          cast<ForStmt>(s.front())->setAsync();
+        return s;
+    }}
+    | for_if_clause
+for_if_clause[std::vector<Stmt *>]:
+    | 'for' SP t=star_targets SP 'in' SP e=disjunction ifs=('if' x=disjunction {<Expr *> x})* {{
+        std::vector<Stmt *> v{asts(For, LOC, t, e, nullptr)};
+        for (auto *c : ifs) v.push_back(asts(If, LOC, c, nullptr));
+        return v;
+    }}
+
+star_targets[Expr *] (memo): xs=','.star_target+ c=[','] { wrapTuple(CTX, xs, c.has_value(), LOC) }
+star_target[Expr *]:
+    | '*' !'*' t=star_target { aste(Star, LOC, t) }
+    | star_parens
+    | primary
+star_parens[Expr *]:
+    | '(' xs=','.star_target+ c=[','] ')' { wrapTuple(CTX, xs, c.has_value(), LOC) }
+    | '[' xs=','.star_target+ c=[','] ']' { wrapTuple(CTX, xs, c.has_value(), LOC) }
+star_expressions[Expr *] (memo): xs=','.star_expression+ c=[','] { wrapTuple(CTX, xs, c.has_value(), LOC) }
+star_expression[Expr *]:
+    | '*' b=bitwise_or { aste(Star, LOC, b) }
+    | expression
+star_named_expression[Expr *] (memo):
+    | '*' b=bitwise_or { aste(Star, LOC, b) }
+    | named_expression
+named_expression[Expr *] (memo):
+    | n=name ':=' ~ e=expression { aste(Assign, LOC, aste(Id, LOC, n), e) }
+    | e=expression !':=' { e }
+arguments[std::vector<CallArg>]:
+    | '(' as=[x=','.args+ [','] {<std::vector<std::vector<CallArg>>> x}] ')' {{
+        std::vector<CallArg> result;
+        if (as)
+          for (auto &v : *as)
+            for (auto &i : v)
+              result.push_back(i);
+        if (EllipsisExpr *e = nullptr; !result.empty() && result.back().getName().empty() &&
+                                      ((e = cast<EllipsisExpr>(result.back().getExpr())))) {
+          auto en = CTX.cache->N<EllipsisExpr>(EllipsisExpr::PARTIAL);
+          en->setSrcInfo(e->getSrcInfo());
+          result.back() = CallArg{"", en};
+        }
+        return result;
+    }}
+args[std::vector<CallArg>]:
+    | a=simple_args k=[',' x=kwargs {<std::vector<CallArg>> x}] {{
+        auto v = a;
+        if (k) v.insert(v.end(), k->begin(), k->end());
+        return v;
+    }}
+    | kwargs
+simple_arg[Expr *]:
+    | starred_expression
+    | e=named_expression !'=' { e }
+simple_args[std::vector<CallArg>]:
+    | xs=','.simple_arg+ {{
+        std::vector<CallArg> v;
+        for (auto *e : xs) v.push_back(CallArg(e));
+        return v;
+    }}
+starred_expression[Expr *] (memo): '*' e=expression { aste(Star, LOC, e) }
+kwargs[std::vector<CallArg>] (memo):
+    | a=','.kwarg_or_starred+ ',' b=','.kwarg_or_double_starred+ {{
+        auto v = a;
+        v.insert(v.end(), b.begin(), b.end());
+        return v;
+    }}
+    | ','.kwarg_or_starred+
+    | ','.kwarg_or_double_starred+
+kwarg_or_starred[CallArg] (memo):
+    | n=name '=' e=expression { CallArg(LOC, n, e) }
+    | s=starred_expression { CallArg(s) }
+kwarg_or_double_starred[CallArg] (memo):
+    | n=name '=' e=expression { CallArg(LOC, n, e) }
+    | '**' e=expression { CallArg(aste(KeywordStar, LOC, e)) }
+id[Expr *]: n=name { aste(Id, LOC, n) }
+name[std::string]: t=NAME { str(t) }
