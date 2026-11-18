@@ -72,7 +72,10 @@ struct BitSet {
 
   BitSet copy(unsigned size) const {
     auto res = BitSet(size);
-    std::memcpy(res.words.data(), words.data(), allocSize(size) * (B / 8));
+    const auto bytes = allocSize(size) * (B / 8);
+    if (bytes != 0) {
+      std::memcpy(res.words.data(), words.data(), bytes);
+    }
     return res;
   }
 
@@ -83,18 +86,32 @@ struct BitSet {
   }
 
   bool equals(const BitSet &other, unsigned size) {
-    return std::memcmp(words.data(), other.words.data(), allocSize(size) * (B / 8)) ==
-           0;
+    const auto bytes = allocSize(size) * (B / 8);
+    if (bytes == 0) {
+      return true;
+    }
+    return std::memcmp(words.data(), other.words.data(), bytes) == 0;
   }
 
-  void clear(unsigned size) { std::memset(words.data(), 0, allocSize(size) * (B / 8)); }
+  void clear(unsigned size) {
+    const auto bytes = allocSize(size) * (B / 8);
+    if (bytes != 0) {
+      std::memset(words.data(), 0, bytes);
+    }
+  }
 
   void setAll(unsigned size) {
-    std::memset(words.data(), 0xff, allocSize(size) * (B / 8));
+    const auto bytes = allocSize(size) * (B / 8);
+    if (bytes != 0) {
+      std::memset(words.data(), 0xff, bytes);
+    }
   }
 
   void overwrite(const BitSet &other, unsigned size) {
-    std::memcpy(words.data(), other.words.data(), allocSize(size) * (B / 8));
+    const auto bytes = allocSize(size) * (B / 8);
+    if (bytes != 0) {
+      std::memcpy(words.data(), other.words.data(), bytes);
+    }
   }
 
   void update(const BitSet &other, unsigned size) {
