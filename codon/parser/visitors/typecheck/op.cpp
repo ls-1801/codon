@@ -1,5 +1,6 @@
 // Copyright (C) 2022-2026 Exaloop Inc. <https://exaloop.io>
 
+#include <limits>
 #include <string>
 #include <tuple>
 
@@ -23,7 +24,11 @@ void TypecheckVisitor::visit(UnaryExpr *expr) {
 
   if (cast<IntExpr>(expr->getExpr()) && expr->getOp() == "-") {
     // Special case: make - INT(val) same as INT(-val) to simplify IR and everything
-    resultExpr = transform(N<IntExpr>(-cast<IntExpr>(expr->getExpr())->getValue()));
+    const auto value = cast<IntExpr>(expr->getExpr())->getValue();
+    // Codon integers use wrapping two's-complement arithmetic. Avoid signed
+    // overflow while preserving -INT64_MIN == INT64_MIN.
+    const auto negated = value == std::numeric_limits<int64_t>::min() ? value : -value;
+    resultExpr = transform(N<IntExpr>(negated));
     return;
   }
 
