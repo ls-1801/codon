@@ -11,6 +11,8 @@
 #include "codon/parser/ast.h"
 #include "codon/parser/common.h"
 #include "codon/parser/peg/rules.h"
+#include "codon/parser/tok/parser.h"
+#include <cstdlib>
 #include "codon/parser/visitors/format/format.h"
 
 #include <ranges>
@@ -89,6 +91,11 @@ llvm::Expected<T> parseCode(Cache *cache, const std::string &file,
 
 llvm::Expected<Stmt *> parseCode(Cache *cache, const std::string &file,
                                  const std::string &code, int line_offset) {
+  // Programs are parsed by the token parser (codon/parser/tok), which builds the same AST
+  // about ten times faster. CODON_PEG_PARSER=1 selects this PEG parser instead.
+  static const bool usePeg = std::getenv("CODON_PEG_PARSER") != nullptr;
+  if (!usePeg)
+    return tokparser::parseProgram(cache, file, code + "\n", line_offset);
   return parseCode<Stmt *>(cache, file, code + "\n", line_offset, 0, "program");
 }
 
