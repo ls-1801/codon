@@ -373,9 +373,17 @@ void LLVMVisitor::dump(const std::string &filename) { writeToLLFile(filename, fa
 
 void LLVMVisitor::optimizeLLVM() { runLLVMPipeline(); }
 
+void LLVMVisitor::optimizeLLVM(const LLVMOptimizationOptions &options) {
+  db.builder->finalize();
+  optimize(M.get(), options, plugins);
+}
+
 void LLVMVisitor::runLLVMPipeline() {
   db.builder->finalize();
-  optimize(M.get(), db.debug, db.jit, plugins);
+  auto options = db.debug ? LLVMOptimizationOptions::debug()
+                          : LLVMOptimizationOptions::release();
+  options.jit = db.jit;
+  optimize(M.get(), options, plugins);
 }
 
 void LLVMVisitor::writeToObjectFile(const std::string &filename, bool pic,

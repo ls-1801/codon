@@ -62,13 +62,14 @@ getTargetMachine(llvm::Module *module, bool setFunctionAttributes, bool pic) {
 }
 
 namespace {
-void applyDebugTransformations(llvm::Module *module, bool debug, bool jit) {
-  if (debug) {
+void applyDebugTransformations(llvm::Module *module,
+                               const LLVMOptimizationOptions &options) {
+  if (options.preserveDebugStackFrames) {
     auto ctor = LLVMVisitor::getGlobalCtorName();
     // remove tail calls and fix linkage for stack traces
     for (auto &f : *module) {
       // needed for debug symbols
-      if (!jit && f.getName() != ctor)
+      if (!options.jit && f.getName() != ctor)
         f.setLinkage(llvm::GlobalValue::ExternalLinkage);
       if (!f.hasFnAttribute(llvm::Attribute::AttrKind::AlwaysInline))
         f.addFnAttr(llvm::Attribute::AttrKind::NoInline);
@@ -85,7 +86,8 @@ void applyDebugTransformations(llvm::Module *module, bool debug, bool jit) {
         }
       }
     }
-  } else {
+  }
+  if (!options.preserveDebugInfo) {
     llvm::StripDebugInfo(*module);
   }
 }
@@ -995,9 +997,10 @@ llvm::cl::opt<bool>
                   llvm::cl::desc("Disable architecture-specific optimizations"),
                   llvm::cl::init(false));
 
-void runLLVMOptimizationPasses(llvm::Module *module, bool debug, bool jit,
+void runLLVMOptimizationPasses(llvm::Module *module,
+                               const LLVMOptimizationOptions &options,
                                PluginManager *plugins) {
-  applyDebugTransformations(module, debug, jit);
+  applyDebugTransformations(module, options);
   applyFastMathTransformations(module);
 
   llvm::LoopAnalysisManager lam;
@@ -1040,21 +1043,16 @@ void runLLVMOptimizationPasses(llvm::Module *module, bool debug, bool jit,
 
   if (plugins) {
     for (auto *plugin : *plugins) {
-      plugin->dsl->addLLVMPasses(&pb, debug);
+      plugin->dsl->addLLVMPasses(&pb, options.preserveDebugStackFrames);
     }
   }
 
-  if (debug) {
-    llvm::ModulePassManager mpm =
-        pb.buildO0DefaultPipeline(llvm::OptimizationLevel::O0);
-    mpm.run(*module, mam);
-  } else {
-    llvm::ModulePassManager mpm =
-        pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-    mpm.run(*module, mam);
-  }
+  llvm::ModulePassManager mpm = options.level == llvm::OptimizationLevel::O0
+                                    ? pb.buildO0DefaultPipeline(options.level)
+                                    : pb.buildPerModuleDefaultPipeline(options.level);
+  mpm.run(*module, mam);
 
-  applyDebugTransformations(module, debug, jit);
+  applyDebugTransformations(module, options);
 }
 
 void verify(llvm::Module *module) {
@@ -1076,15 +1074,12 @@ void setNativeOptimizationEnabled(bool enabled) {
   DisableNative = !enabled;
 }
 
-void optimize(llvm::Module *module, bool debug, bool jit, PluginManager *plugins) {
+void optimize(llvm::Module *module, const LLVMOptimizationOptions &options,
+              PluginManager *plugins) {
   verify(module);
-  {
+  for (unsigned run = 0; run < options.runs; ++run) {
     TIME("llvm/opt1");
-    runLLVMOptimizationPasses(module, debug, jit, plugins);
-  }
-  if (!debug) {
-    TIME("llvm/opt2");
-    runLLVMOptimizationPasses(module, debug, jit, plugins);
+    runLLVMOptimizationPasses(module, options, plugins);
   }
   {
     TIME("llvm/gpu");
@@ -1093,6 +1088,14 @@ void optimize(llvm::Module *module, bool debug, bool jit, PluginManager *plugins
 #endif
   }
   verify(module);
+}
+
+void optimize(llvm::Module *module, bool debug, bool jit,
+              PluginManager *plugins) {
+  auto options = debug ? LLVMOptimizationOptions::debug()
+                       : LLVMOptimizationOptions::release();
+  options.jit = jit;
+  optimize(module, options, plugins);
 }
 
 bool isFastMathOn() { return FastMath; }

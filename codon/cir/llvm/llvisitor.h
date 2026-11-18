@@ -16,6 +16,8 @@
 namespace codon {
 namespace ir {
 
+struct LLVMOptimizationOptions;
+
 class LLVMVisitor : public util::ConstVisitor {
 private:
   struct CoroData {
@@ -347,6 +349,9 @@ public:
 
   /// Runs Codon's LLVM optimization pipeline without writing the module.
   void optimizeLLVM();
+  /// Runs Codon's LLVM optimization pipeline using explicit optimization and
+  /// debug-information settings.
+  void optimizeLLVM(const LLVMOptimizationOptions &options);
 
   /// Writes module as native object file.
   /// @param filename the .o file to write to
