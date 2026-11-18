@@ -26,6 +26,7 @@ struct IntStaticType;
 struct StrStaticType;
 struct BoolStaticType;
 struct UnionType;
+struct CallableTrait;
 
 enum LiteralKind { Runtime, Int, String, Bool };
 
@@ -117,6 +118,7 @@ public:
   virtual StrStaticType *getStrStatic() { return nullptr; }
   virtual BoolStaticType *getBoolStatic() { return nullptr; }
   virtual UnionType *getUnion() { return nullptr; }
+  virtual CallableTrait *getCallableTrait() { return nullptr; }
 
   virtual bool is(const std::string &s);
 

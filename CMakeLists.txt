@@ -5,6 +5,7 @@ project(
   HOMEPAGE_URL "https://github.com/exaloop/codon"
   DESCRIPTION "high-performance, extensible Python compiler")
 set(CODON_JIT_PYTHON_VERSION "0.4.6")
+option(CODON_COMPILER_ONLY "Build only the AOT compiler library" OFF)
 configure_file("${PROJECT_SOURCE_DIR}/cmake/config.h.in"
                "${PROJECT_SOURCE_DIR}/codon/config/config.h")
 configure_file("${PROJECT_SOURCE_DIR}/cmake/config.py.in"
@@ -53,7 +54,7 @@ endif()
 
 add_executable(peg2cpp codon/util/peg2cpp.cpp)
 target_include_directories(peg2cpp PRIVATE ${peglib_SOURCE_DIR})
-target_link_libraries(peg2cpp PRIVATE Threads::Threads fmt)
+target_link_libraries(peg2cpp PRIVATE Threads::Threads fmt::fmt)
 add_custom_command(
   OUTPUT codon_rules.cpp
   COMMAND peg2cpp ${CMAKE_SOURCE_DIR}/codon/parser/peg/grammar.peg
@@ -65,7 +66,8 @@ add_custom_command(
           omp
   DEPENDS peg2cpp codon/parser/peg/openmp.peg)
 
-# Codon Jupyter library
+# Codon Jupyter library and runtime
+if(NOT CODON_COMPILER_ONLY)
 set(CODON_JUPYTER_FILES codon/util/jupyter.h codon/util/jupyter.cpp)
 add_library(codon_jupyter SHARED ${CODON_JUPYTER_FILES})
 
@@ -170,6 +172,7 @@ add_custom_command(
   POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:omp>
           ${CMAKE_BINARY_DIR})
+endif()
 
 # Codon compiler library
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -382,11 +385,38 @@ set(CODON_CPPFILES
   codon/cir/transform/numpy/indexing.cpp
   codon/cir/transform/numpy/numpy.cpp
   codon/util/common.cpp)
-add_library(codonc SHARED ${CODON_HPPFILES})
-target_include_directories(codonc PRIVATE ${peglib_SOURCE_DIR}
-                                          ${toml_SOURCE_DIR}/include
-                                          ${semver_SOURCE_DIR}/include
-                                          ${fast_float_SOURCE_DIR}/include)
+if(CODON_COMPILER_ONLY)
+  list(REMOVE_ITEM CODON_CPPFILES
+    codon/compiler/debug_listener.cpp
+    codon/compiler/engine.cpp
+    codon/compiler/jit.cpp
+    codon/compiler/memory_manager.cpp
+    codon/dsl/plugins.cpp
+    codon/cir/llvm/gpu.cpp)
+endif()
+if(CODON_COMPILER_ONLY)
+  add_library(codonc STATIC ${CODON_HPPFILES})
+  set_property(TARGET codonc PROPERTY EXPORT_NAME compiler)
+else()
+  add_library(codonc SHARED ${CODON_HPPFILES})
+endif()
+target_include_directories(codonc PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<INSTALL_INTERFACE:include>)
+target_include_directories(codonc PRIVATE ${peglib_SOURCE_DIR} ${fast_float_INCLUDE_DIR})
+if(NOT CODON_COMPILER_ONLY)
+  target_include_directories(codonc PRIVATE ${toml_SOURCE_DIR}/include
+                                            ${semver_SOURCE_DIR}/include
+                                            ${fast_float_SOURCE_DIR}/include)
+else()
+  target_compile_definitions(codonc PUBLIC CODON_COMPILER_ONLY)
+  # Codon and LLVM exchange polymorphic C++ objects. Match LLVM's RTTI mode:
+  # sanitizer builds use an RTTI-enabled LLVM so UBSan can validate vptrs,
+  # while regular NES dependency builds keep the smaller no-RTTI setup.
+  if(NOT LLVM_ENABLE_RTTI)
+    target_compile_options(codonc PRIVATE -fno-rtti)
+  endif()
+endif()
 target_sources(codonc PRIVATE ${CODON_CPPFILES} codon_rules.cpp omp_rules.cpp)
 if(ASAN)
   target_compile_options(
@@ -434,14 +464,25 @@ file(GLOB_RECURSE CODON_STDLIB_RESOURCES
   CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/*.codon"
 )
+set(CODON_STDLIB_TYPE)
+if(CODON_COMPILER_ONLY)
+  list(APPEND CODON_STDLIB_TYPE TYPE OBJECT)
+endif()
 cmrc_add_resource_library(
   codon-stdlib
   NAMESPACE codon
+  ${CODON_STDLIB_TYPE}
   ${CODON_STDLIB_RESOURCES}
 )
 set_property(TARGET codon-stdlib PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(codonc PRIVATE ${LLVM_LIBS} fmt dl codonrt codon-stdlib)
+target_link_libraries(codonc PRIVATE ${LLVM_LIBS} fmt::fmt)
+if(CODON_COMPILER_ONLY)
+  target_sources(codonc PRIVATE $<TARGET_OBJECTS:codon-stdlib>)
+  target_include_directories(codonc PRIVATE ${CMRC_INCLUDE_DIR})
+else()
+  target_link_libraries(codonc PRIVATE dl codonrt codon-stdlib)
+endif()
 
 # Gather headers
 add_custom_target(
@@ -454,9 +495,13 @@ add_custom_target(
           "${CMAKE_BINARY_DIR}/include/codon"
   COMMAND find "${CMAKE_BINARY_DIR}/include" -type f ! -name "*.h" -exec rm {}
           \\;)
-add_dependencies(headers codonrt codonc)
+add_dependencies(headers codonc)
+if(NOT CODON_COMPILER_ONLY)
+  add_dependencies(headers codonrt)
+endif()
 
 # Prepare lib directory for plugin compilation
+if(NOT CODON_COMPILER_ONLY)
 add_custom_target(
   libs ALL
   COMMENT "Collecting libraries"
@@ -482,8 +527,10 @@ add_custom_target(
   COMMAND
     ${CMAKE_COMMAND} -E copy ${copied_libgcc} "${CMAKE_BINARY_DIR}/lib/codon")
 add_dependencies(libs codonrt codonc)
+endif()
 
 # Codon command-line tool
+if(NOT CODON_COMPILER_ONLY)
 add_executable(codon codon/app/main.cpp)
 target_link_libraries(codon PUBLIC fmt codonc codon_jupyter Threads::Threads)
 
@@ -519,7 +566,18 @@ target_include_directories(codon_test PRIVATE test/cir "${gc_SOURCE_DIR}/include
 target_link_libraries(codon_test fmt codonc codonrt gtest_main)
 target_compile_definitions(codon_test
                            PRIVATE TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test")
+endif()
 
+if(CODON_COMPILER_ONLY)
+install(TARGETS codonc
+        EXPORT codon-compiler-targets
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib)
+install(EXPORT codon-compiler-targets
+        FILE codon-compiler-targets.cmake
+        NAMESPACE codon::
+        DESTINATION share/codon-compiler)
+else()
 install(TARGETS codonrt codonc codon_jupyter DESTINATION lib/codon)
 install(FILES ${CMAKE_BINARY_DIR}/libomp${CMAKE_SHARED_LIBRARY_SUFFIX} DESTINATION lib/codon)
 install(FILES ${copied_libgfortran} DESTINATION lib/codon)
@@ -532,7 +590,14 @@ install(CODE "
 ")
 install(FILES ${copied_libgcc} DESTINATION lib/codon)
 install(TARGETS codon DESTINATION bin)
+endif()
+if(CODON_COMPILER_ONLY)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/codon DESTINATION include
+        FILES_MATCHING PATTERN "*.h")
+else()
 install(DIRECTORY ${CMAKE_BINARY_DIR}/include/codon DESTINATION include)
+endif()
+if(NOT CODON_COMPILER_ONLY)
 install(DIRECTORY ${LLVM_INCLUDE_DIRS}/llvm DESTINATION include)
 install(DIRECTORY ${LLVM_INCLUDE_DIRS}/llvm-c DESTINATION include)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/stdlib DESTINATION lib/codon)
@@ -553,3 +618,4 @@ install(CODE [[
     endif()
   endif()
 ]])
+endif()

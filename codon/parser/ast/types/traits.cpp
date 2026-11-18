@@ -172,7 +172,7 @@ int CallableTrait::unify(Type *typ, Unification *us) {
       return unify(tl->type.get(), us);
     if (tl->kind == LinkType::Unbound) {
       if (tl->trait) {
-        auto tt = dynamic_cast<CallableTrait *>(tl->trait.get());
+        auto tt = tl->trait->getCallableTrait();
         if (!tt || tt->args.size() != args.size())
           return -1;
         for (int i = 0; i < args.size(); i++)

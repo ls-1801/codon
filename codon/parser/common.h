@@ -216,6 +216,7 @@ public:
                      bool allowExternal = true);
   std::vector<std::string> read_lines(const path_t &path) const override;
   bool exists(const path_t &path) const override;
+  path_t canonical(const path_t &path) const override;
 };
 
 /// Find an import file what given an executable path (argv0) either in the standard

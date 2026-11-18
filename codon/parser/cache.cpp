@@ -247,7 +247,7 @@ Cache::mergeC3(std::vector<std::vector<types::TypePtr>> &seqs) {
           }
         }
       if (!nothead) {
-        cand = std::dynamic_pointer_cast<types::ClassType>(seq[0]);
+        cand = std::static_pointer_cast<types::ClassType>(seq[0]);
         break;
       }
     }

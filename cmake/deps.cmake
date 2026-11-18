@@ -6,6 +6,13 @@ if(NOT (EXISTS ${CPM_DOWNLOAD_LOCATION}))
 endif()
 include(${CPM_DOWNLOAD_LOCATION})
 
+if(CODON_COMPILER_ONLY)
+    find_package(fmt CONFIG REQUIRED)
+    find_path(peglib_SOURCE_DIR NAMES peglib.h REQUIRED)
+    find_path(fast_float_INCLUDE_DIR NAMES fast_float/fast_float.h REQUIRED)
+    return()
+endif()
+
 CPMAddPackage(
     NAME peglib
     GITHUB_REPOSITORY "exaloop/cpp-peglib"

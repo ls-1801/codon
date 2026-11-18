@@ -67,7 +67,7 @@ void TranslateContext::addSeries(codon::ir::SeriesFlow *s) { series.push_back(s)
 void TranslateContext::popSeries() { series.pop_back(); }
 
 codon::ir::Module *TranslateContext::getModule() const {
-  return dynamic_cast<codon::ir::Module *>(bases[0]->getModule());
+  return bases[0]->getModule();
 }
 codon::ir::BodiedFunc *TranslateContext::getBase() const { return bases.back(); }
 codon::ir::SeriesFlow *TranslateContext::getSeries() const { return series.back(); }

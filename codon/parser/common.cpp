@@ -117,8 +117,9 @@ ResourceFilesystem::ResourceFilesystem(const std::string &argv0,
 
 std::vector<std::string> ResourceFilesystem::read_lines(const path_t &path) const {
   auto fs = cmrc::codon::get_filesystem();
+  const auto normalizedPath = path.lexically_normal();
 
-  if (!fs.exists(path) && allowExternal)
+  if (!fs.exists(normalizedPath) && allowExternal)
     return Filesystem::read_lines(path);
 
   std::vector<std::string> lines;
@@ -126,7 +127,7 @@ std::vector<std::string> ResourceFilesystem::read_lines(const path_t &path) cons
     E(error::Error::COMPILER_NO_FILE, SrcInfo(), "<stdin>");
   } else {
     try {
-      auto fd = fs.open(path);
+      auto fd = fs.open(normalizedPath);
       auto contents = std::string(fd.begin(), fd.end());
       lines = split(contents, '\n');
     } catch (std::system_error &) {
@@ -138,11 +139,18 @@ std::vector<std::string> ResourceFilesystem::read_lines(const path_t &path) cons
 
 bool ResourceFilesystem::exists(const path_t &path) const {
   auto fs = cmrc::codon::get_filesystem();
-  if (fs.exists(path))
+  if (fs.exists(path.lexically_normal()))
     return true;
   if (allowExternal)
     return Filesystem::exists(path);
   return false;
+}
+
+IFilesystem::path_t ResourceFilesystem::canonical(const path_t &path) const {
+  const auto normalizedPath = path.lexically_normal();
+  if (cmrc::codon::get_filesystem().exists(normalizedPath))
+    return normalizedPath;
+  return allowExternal ? Filesystem::canonical(path) : normalizedPath;
 }
 
 /// String and collection utilities
@@ -407,6 +415,15 @@ std::shared_ptr<ImportFile> getImportFile(Cache *cache, const std::string &what,
       paths.emplace_back(fs->canonical(path));
 
     path = p / what / "__init__.codon";
+    if (fs->exists(path))
+      paths.emplace_back(fs->canonical(path));
+
+    path = p / what;
+    path.replace_extension("py");
+    if (fs->exists(path))
+      paths.emplace_back(fs->canonical(path));
+
+    path = p / what / "__init__.py";
     if (fs->exists(path))
       paths.emplace_back(fs->canonical(path));
 

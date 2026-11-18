@@ -24,6 +24,7 @@
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
+#ifndef CODON_COMPILER_ONLY
 #include "llvm/ExecutionEngine/GenericValue.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/JITLink/JITLink.h"
@@ -59,6 +60,7 @@
 #include "llvm/ExecutionEngine/Orc/TargetProcess/TargetExecutionUtils.h"
 #include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#endif
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"

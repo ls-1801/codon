@@ -26,6 +26,7 @@ struct CallableTrait : public Trait {
 
 public:
   explicit CallableTrait(Cache *cache, std::vector<TypePtr> args);
+  CallableTrait *getCallableTrait() override { return this; }
   int unify(Type *typ, Unification *undo) override;
   TypePtr generalize(int atLevel) const override;
   TypePtr instantiate(int atLevel, int *unboundCount,

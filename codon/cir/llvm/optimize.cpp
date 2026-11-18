@@ -1072,6 +1072,10 @@ void verify(llvm::Module *module) {
 
 } // namespace
 
+void setNativeOptimizationEnabled(bool enabled) {
+  DisableNative = !enabled;
+}
+
 void optimize(llvm::Module *module, bool debug, bool jit, PluginManager *plugins) {
   verify(module);
   {
@@ -1084,7 +1088,9 @@ void optimize(llvm::Module *module, bool debug, bool jit, PluginManager *plugins
   }
   {
     TIME("llvm/gpu");
+#ifndef CODON_COMPILER_ONLY
     applyGPUTransformations(module);
+#endif
   }
   verify(module);
 }

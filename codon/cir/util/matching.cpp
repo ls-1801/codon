@@ -9,7 +9,8 @@
 
 #define VISIT(x)                                                                       \
   void visit(const x *v) override {                                                    \
-    if (matchAny || dynamic_cast<const util::Any *>(v)) {                              \
+    if (matchAny || v->is<util::AnyValue>() || v->is<util::AnyFlow>() ||               \
+        v->is<util::AnyVar>() || v->is<util::AnyFunc>()) {                             \
       result = true;                                                                   \
       matchAny = true;                                                                 \
     } else if (!nodeId) {                                                              \

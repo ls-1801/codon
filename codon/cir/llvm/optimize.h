@@ -18,6 +18,9 @@ std::unique_ptr<llvm::TargetMachine>
 getTargetMachine(llvm::Module *module, bool setFunctionAttributes = false,
                  bool pic = false);
 
+/// Enables or disables architecture-specific LLVM optimizations.
+void setNativeOptimizationEnabled(bool enabled);
+
 void optimize(llvm::Module *module, bool debug, bool jit = false,
               PluginManager *plugins = nullptr);
 

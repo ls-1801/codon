@@ -344,6 +344,10 @@ public:
   /// Dumps the unoptimized module IR to a file.
   /// @param filename name of file to write IR to
   void dump(const std::string &filename = "_dump.ll");
+
+  /// Runs Codon's LLVM optimization pipeline without writing the module.
+  void optimizeLLVM();
+
   /// Writes module as native object file.
   /// @param filename the .o file to write to
   /// @param pic true to write position-independent code

@@ -13,8 +13,10 @@
 #include "codon/cir/dsl/codegen.h"
 #include "codon/cir/llvm/optimize.h"
 #include "codon/cir/util/irtools.h"
+#ifndef CODON_COMPILER_ONLY
 #include "codon/compiler/debug_listener.h"
 #include "codon/compiler/memory_manager.h"
+#endif
 #include "codon/parser/common.h"
 #include "codon/runtime/lib.h"
 #include "codon/util/common.h"
@@ -107,7 +109,6 @@ LLVMVisitor::LLVMVisitor()
   llvm::initializeTarget(registry);
 
   llvm::initializeExpandLargeDivRemLegacyPassPass(registry);
-  llvm::initializeExpandLargeFpConvertLegacyPassPass(registry);
   llvm::initializeExpandMemCmpLegacyPassPass(registry);
   llvm::initializeScalarizeMaskedMemIntrinLegacyPassPass(registry);
   llvm::initializeSelectOptimizePass(registry);
@@ -256,7 +257,7 @@ std::unique_ptr<llvm::Module> LLVMVisitor::makeModule(llvm::LLVMContext &context
 
   auto target = builder.selectTarget();
   auto M = std::make_unique<llvm::Module>("codon", context);
-  M->setTargetTriple(target->getTargetTriple().str());
+  M->setTargetTriple(target->getTargetTriple());
   M->setDataLayout(target->createDataLayout());
   B = std::make_unique<llvm::IRBuilder<>>(context);
 
@@ -369,6 +370,8 @@ void LLVMVisitor::process(const Node *x) {
 }
 
 void LLVMVisitor::dump(const std::string &filename) { writeToLLFile(filename, false); }
+
+void LLVMVisitor::optimizeLLVM() { runLLVMPipeline(); }
 
 void LLVMVisitor::runLLVMPipeline() {
   db.builder->finalize();
@@ -651,8 +654,9 @@ llvm::Function *LLVMVisitor::createPyTryCatchWrapper(llvm::Function *func) {
   auto *unwindExceptionClass = B->CreateLoad(
       B->getInt64Ty(), B->CreateStructGEP(unwindType, unwindException, 0));
   unwindException = B->CreateExtractValue(caughtResult, 0);
-  auto *excVal = B->CreateConstGEP1_64(B->getInt8Ty(), unwindException,
-                                       (uint64_t)seq_exc_offset());
+  auto excOffset = B->CreateCall(
+      M->getOrInsertFunction("seq_exc_offset", B->getInt64Ty()));
+  auto *excVal = B->CreateGEP(B->getInt8Ty(), unwindException, excOffset);
   auto *loadedExc = B->CreateLoad(B->getPtrTy(), excVal);
 
   auto *strType = llvm::StructType::get(B->getInt64Ty(), B->getPtrTy());
@@ -1237,6 +1241,9 @@ void LLVMVisitor::compile(const std::string &filename, const std::string &argv0,
 
 void LLVMVisitor::run(const std::vector<std::string> &args,
                       const std::vector<std::string> &libs, const char *const *envp) {
+#ifdef CODON_COMPILER_ONLY
+  compilationError("JIT execution is unavailable in compiler-only builds");
+#else
   runLLVMPipeline();
 
   Timer t1("llvm/jitlink");
@@ -1297,6 +1304,7 @@ void LLVMVisitor::run(const std::vector<std::string> &args,
     fmt::print(stderr, "{}\n", e.getOutput());
     std::abort();
   }
+#endif
 }
 
 #define ALLOC_FAMILY "seq_alloc"
@@ -3014,8 +3022,9 @@ void LLVMVisitor::visit(const TryCatchFlow *x) {
   // reroute Codon exceptions
   B->SetInsertPoint(tc.exceptionRouteBlock);
   unwindException = B->CreateExtractValue(B->CreateLoad(padType, tc.catchStore), 0);
-  auto *excVal = B->CreateConstGEP1_64(B->getInt8Ty(), unwindException,
-                                       (uint64_t)seq_exc_offset());
+  auto excOffset = B->CreateCall(
+      M->getOrInsertFunction("seq_exc_offset", B->getInt64Ty()));
+  auto *excVal = B->CreateGEP(B->getInt8Ty(), unwindException, excOffset);
   auto *loadedExc = B->CreateLoad(B->getPtrTy(), excVal);
 
   // set depth when catch-all entered

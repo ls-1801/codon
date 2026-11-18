@@ -34,7 +34,12 @@ Compiler::Compiler(const std::string &argv0, Compiler::Mode mode,
                    bool pyNumerics, bool pyExtension,
                    const std::shared_ptr<ast::IFilesystem> &fs)
     : argv0(argv0), debug(mode == Mode::DEBUG), pyNumerics(pyNumerics),
-      pyExtension(pyExtension), input(), plm(std::make_unique<PluginManager>(argv0)),
+      pyExtension(pyExtension), input(),
+#ifdef CODON_COMPILER_ONLY
+      plm(),
+#else
+      plm(std::make_unique<PluginManager>(argv0)),
+#endif
       cache(std::make_unique<ast::Cache>(argv0, fs)),
       module(std::make_unique<ir::Module>()),
       pm(std::make_unique<ir::transform::PassManager>(
@@ -50,6 +55,10 @@ Compiler::Compiler(const std::string &argv0, Compiler::Mode mode,
 }
 
 llvm::Error Compiler::load(const std::string &plugin) {
+#ifdef CODON_COMPILER_ONLY
+  return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                 "Codon plugins are unavailable in compiler-only builds");
+#else
   auto result = plm->load(plugin);
   if (auto err = result.takeError())
     return err;
@@ -69,6 +78,7 @@ llvm::Error Compiler::load(const std::string &plugin) {
   loadedPlugins.insert(plugin);
 
   return llvm::Error::success();
+#endif
 }
 
 /// Checks if a plugin is already loaded.
