@@ -37,7 +37,7 @@ getTargetMachine(llvm::Triple triple, llvm::StringRef cpuStr,
     return nullptr;
 
   return std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
-      triple.getTriple(), cpuStr, featuresStr, options,
+      triple, cpuStr, featuresStr, options,
       pic ? llvm::Reloc::Model::PIC_ : llvm::codegen::getExplicitRelocModel(),
       llvm::codegen::getExplicitCodeModel(), llvm::CodeGenOptLevel::Aggressive));
 }

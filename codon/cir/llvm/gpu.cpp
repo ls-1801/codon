@@ -519,7 +519,7 @@ void remapFunctions(llvm::Module *M) {
        [](llvm::IRBuilder<> &B, const std::vector<llvm::Value *> &args) {
          auto *M = B.GetInsertBlock()->getModule();
          llvm::Value *mem = B.CreateCall(makeMalloc(M), args[1]);
-         auto F = llvm::Intrinsic::getDeclaration(
+         auto F = llvm::Intrinsic::getOrInsertDeclaration(
              M, llvm::Intrinsic::memcpy, {B.getPtrTy(), B.getPtrTy(), B.getInt64Ty()});
          B.CreateCall(F, {mem, args[0], args[2], B.getFalse()});
          B.CreateRet(mem);
@@ -530,7 +530,7 @@ void remapFunctions(llvm::Module *M) {
          auto *M = B.GetInsertBlock()->getModule();
          llvm::Value *size = B.CreateMul(args[0], args[1]);
          llvm::Value *mem = B.CreateCall(makeMalloc(M), size);
-         auto F = llvm::Intrinsic::getDeclaration(M, llvm::Intrinsic::memset,
+         auto F = llvm::Intrinsic::getOrInsertDeclaration(M, llvm::Intrinsic::memset,
                                                   {B.getPtrTy(), B.getInt64Ty()});
          B.CreateCall(F, {mem, B.getInt8(0), size, B.getFalse()});
          B.CreateRet(mem);
@@ -541,7 +541,7 @@ void remapFunctions(llvm::Module *M) {
          auto *M = B.GetInsertBlock()->getModule();
          llvm::Value *size = B.CreateMul(args[0], args[1]);
          llvm::Value *mem = B.CreateCall(makeMalloc(M), size);
-         auto F = llvm::Intrinsic::getDeclaration(M, llvm::Intrinsic::memset,
+         auto F = llvm::Intrinsic::getOrInsertDeclaration(M, llvm::Intrinsic::memset,
                                                   {B.getPtrTy(), B.getInt64Ty()});
          B.CreateCall(F, {mem, B.getInt8(0), size, B.getFalse()});
          B.CreateRet(mem);
