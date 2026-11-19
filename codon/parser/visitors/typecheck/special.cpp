@@ -826,6 +826,10 @@ Expr *TypecheckVisitor::transformTupleFn(CallExpr *expr) {
     return e;
   }
 
+  // A class with a method `__tuple__(self)` gives its own tuple, e.g. a JSON array.
+  if (!findMethod(cls, "__tuple__").empty())
+    return transform(N<CallExpr>(N<DotExpr>(expr->begin()->getExpr(), "__tuple__")));
+
   std::vector<Expr *> args;
   std::string var = getTemporaryVar("tup");
   for (auto &field : getClassFields(cls))

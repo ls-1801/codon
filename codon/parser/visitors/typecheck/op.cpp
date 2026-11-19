@@ -77,6 +77,29 @@ void TypecheckVisitor::visit(UnaryExpr *expr) {
 /// @c transformBinaryInplaceMagic for details.
 /// Also evaluate static expressions. See @c evaluateStaticBinary for details.
 void TypecheckVisitor::visit(BinaryExpr *expr) {
+  // `type(obj) == T` (also !=, is, is not) for a type T that is not the type of obj: a class with a method
+  // `__type_is__(self, T: type) -> bool` answers at run time, e.g. a JSON value that holds a list.
+  if (auto call = cast<CallExpr>(expr->getLhs());
+      call && call->size() == 1 && match(call->getExpr(), M<IdExpr>("type")) &&
+      (expr->op == "==" || expr->op == "!=" || expr->op == "is" || expr->op == "is not")) {
+    call->begin()->value = transform(call->begin()->getExpr());
+    expr->rexpr = transform(expr->getRhs(), true);
+    auto objType = call->begin()->getExpr()->getClassType();
+    if (objType && objType->canRealize() && isTypeExpr(expr->getRhs()) &&
+        !findMethod(objType, "__type_is__").empty()) {
+      // The target may be generic (`list` is List[T]), so compare classes, not realized types.
+      auto target = extractType(expr->getRhs())->getClass();
+      if (target && target->name != objType->name) {
+        Expr *answer = N<CallExpr>(N<DotExpr>(call->begin()->getExpr(), "__type_is__"),
+                                   expr->getRhs());
+        if (expr->op == "!=" || expr->op == "is not")
+          answer = N<UnaryExpr>("!", answer);
+        resultExpr = transform(answer);
+        return;
+      }
+    }
+  }
+
   expr->lexpr = transform(expr->getLhs(), true);
 
   // Static short-circuit
