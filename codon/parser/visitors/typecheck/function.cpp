@@ -119,6 +119,29 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
       stmt->expr = N<CallExpr>(N<IdExpr>("NoneType"));
     stmt->expr = transform(stmt->getExpr());
 
+    // A returned value whose type does not match the annotated return type T converts through `value.__as__(T)` if its
+    // class (or the class in an Optional) has that method; a None in the Optional fails at run time, as when an Optional
+    // is returned as its content type.
+    if (!isAsync && !ctx->getBase()->returnType->getUnbound()) {
+      auto returnType = ctx->getBase()->returnType->getClass();
+      auto valueType = stmt->getExpr()->getClassType();
+      if (returnType && valueType && returnType->canRealize() && valueType->canRealize()) {
+        types::Type::Unification us;
+        auto score = returnType->unify(valueType, &us);
+        us.undo();
+        Expr *value = stmt->getExpr();
+        auto convertedType = valueType;
+        if (valueType->is(TYPE_OPTIONAL)) {
+          convertedType = extractClassGeneric(valueType)->getClass();
+          value = N<CallExpr>(N<DotExpr>(value, "__val__"));
+        }
+        if (score < 0 && convertedType && !findMethod(convertedType, "__as__").empty()) {
+          stmt->expr = transform(N<CallExpr>(N<DotExpr>(value, "__as__"),
+                                             N<IdExpr>(returnType->realizedName())));
+        }
+      }
+    }
+
     // Wrap expression to match the return type
     if (!ctx->getBase()->returnType->getUnbound())
       if (!wrapExpr(&stmt->expr, ctx->getBase()->returnType.get())) {
