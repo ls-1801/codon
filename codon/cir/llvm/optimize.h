@@ -3,6 +3,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include "codon/cir/llvm/llvm.h"
 #include "codon/dsl/plugins.h"
@@ -27,6 +28,14 @@ struct LLVMOptimizationOptions {
   bool preserveDebugInfo = false;
   bool preserveDebugStackFrames = false;
   bool jit = false;
+  /// Add Codon's passes (allocation removal and hoisting, coroutine branch
+  /// simplification) to the standard pipeline.
+  bool codonPasses = true;
+  /// A pass pipeline in LLVM's textual form (as for `opt -passes=`) that replaces the
+  /// standard pipeline of `level`. Codon's passes are available in it as
+  /// `codon-alloc-remover`, `codon-alloc-hoister` (function passes) and
+  /// `codon-coro-branch-simplifier` (a loop pass).
+  std::string pipeline;
 
   static LLVMOptimizationOptions debug() {
     return {
@@ -51,6 +60,11 @@ struct LLVMOptimizationOptions {
 
 void optimize(llvm::Module *module, const LLVMOptimizationOptions &options,
               PluginManager *plugins = nullptr);
+
+/// Adds Codon's passes to a pass builder: by name for textual pipelines, and, if
+/// `extensionPoints`, at the extension points where Codon's own pipeline runs them. For
+/// compilers that optimize Codon's LLVM IR in a pipeline of their own.
+void registerCodonLLVMPasses(llvm::PassBuilder &pb, bool extensionPoints = true);
 
 void optimize(llvm::Module *module, bool debug, bool jit = false,
               PluginManager *plugins = nullptr);

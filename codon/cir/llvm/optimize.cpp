@@ -1020,23 +1020,7 @@ void runLLVMOptimizationPasses(llvm::Module *module,
   pb.registerLoopAnalyses(lam);
   pb.crossRegisterProxies(lam, fam, cgam, mam);
 
-  pb.registerLateLoopOptimizationsEPCallback(
-      [&](llvm::LoopPassManager &pm, llvm::OptimizationLevel opt) {
-        if (opt.isOptimizingForSpeed())
-          pm.addPass(CoroBranchSimplifier());
-      });
-
-  pb.registerPeepholeEPCallback(
-      [&](llvm::FunctionPassManager &pm, llvm::OptimizationLevel opt) {
-        if (opt.isOptimizingForSpeed()) {
-          pm.addPass(AllocationRemover());
-          pm.addPass(llvm::LoopSimplifyPass());
-          pm.addPass(llvm::LCSSAPass());
-          pm.addPass(AllocationHoister());
-          if (AutoFree)
-            pm.addPass(AllocationAutoFree());
-        }
-      });
+  registerCodonLLVMPasses(pb, options.codonPasses);
 
   if (!DisableNative)
     addNativeLLVMPasses(&pb);
@@ -1047,9 +1031,16 @@ void runLLVMOptimizationPasses(llvm::Module *module,
     }
   }
 
-  llvm::ModulePassManager mpm = options.level == llvm::OptimizationLevel::O0
-                                    ? pb.buildO0DefaultPipeline(options.level)
-                                    : pb.buildPerModuleDefaultPipeline(options.level);
+  llvm::ModulePassManager mpm;
+  if (!options.pipeline.empty()) {
+    if (auto err = pb.parsePassPipeline(mpm, options.pipeline))
+      seqassertn(false, "invalid LLVM pass pipeline '{}': {}", options.pipeline,
+                 llvm::toString(std::move(err)));
+  } else {
+    mpm = options.level == llvm::OptimizationLevel::O0
+              ? pb.buildO0DefaultPipeline(options.level)
+              : pb.buildPerModuleDefaultPipeline(options.level);
+  }
   mpm.run(*module, mam);
 
   applyDebugTransformations(module, options);
@@ -1069,6 +1060,51 @@ void verify(llvm::Module *module) {
 }
 
 } // namespace
+
+void registerCodonLLVMPasses(llvm::PassBuilder &pb, bool extensionPoints) {
+  pb.registerPipelineParsingCallback(
+      [](llvm::StringRef name, llvm::FunctionPassManager &pm,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (name == "codon-alloc-remover") {
+          pm.addPass(AllocationRemover());
+          return true;
+        }
+        if (name == "codon-alloc-hoister") {
+          pm.addPass(AllocationHoister());
+          return true;
+        }
+        return false;
+      });
+  pb.registerPipelineParsingCallback(
+      [](llvm::StringRef name, llvm::LoopPassManager &pm,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (name == "codon-coro-branch-simplifier") {
+          pm.addPass(CoroBranchSimplifier());
+          return true;
+        }
+        return false;
+      });
+  if (!extensionPoints)
+    return;
+
+  pb.registerLateLoopOptimizationsEPCallback(
+      [](llvm::LoopPassManager &pm, llvm::OptimizationLevel opt) {
+        if (opt.isOptimizingForSpeed())
+          pm.addPass(CoroBranchSimplifier());
+      });
+
+  pb.registerPeepholeEPCallback(
+      [](llvm::FunctionPassManager &pm, llvm::OptimizationLevel opt) {
+        if (opt.isOptimizingForSpeed()) {
+          pm.addPass(AllocationRemover());
+          pm.addPass(llvm::LoopSimplifyPass());
+          pm.addPass(llvm::LCSSAPass());
+          pm.addPass(AllocationHoister());
+          if (AutoFree)
+            pm.addPass(AllocationAutoFree());
+        }
+      });
+}
 
 void setNativeOptimizationEnabled(bool enabled) {
   DisableNative = !enabled;
