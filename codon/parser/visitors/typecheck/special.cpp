@@ -668,6 +668,13 @@ Expr *TypecheckVisitor::transformIsInstance(CallExpr *expr) {
     }
   }
 
+  // A class with a method `__isinstance__(self, T: type) -> bool` answers at run time for a type it is not statically, e.g.
+  // a JSON value that holds a list or a dict.
+  if (!findMethod(typ->getClass(), "__isinstance__").empty()) {
+    return transform(N<CallExpr>(N<DotExpr>(expr->begin()->getExpr(), "__isinstance__"),
+                                 (*expr)[1].getExpr()));
+  }
+
   return transform(N<BoolExpr>(false));
 }
 
