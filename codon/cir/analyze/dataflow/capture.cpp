@@ -710,6 +710,15 @@ std::vector<CaptureInfo> CaptureContext::get(const Func *func) {
     if (it != results.end())
       return it->second;
 
+    // A function that the analyses did not see, e.g. one that Module::hideVars hid:
+    // assume that it captures all its arguments.
+    if (reaching->cfgResult->graphs.find(func->getId()) ==
+        reaching->cfgResult->graphs.end()) {
+      auto answer = makeAllCaptureInfo(func);
+      set(func, answer);
+      return answer;
+    }
+
     set(func, makeAllCaptureInfo(func));
 
     CaptureTracker ct(*this, cast<BodiedFunc>(func));

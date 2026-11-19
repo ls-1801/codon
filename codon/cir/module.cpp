@@ -437,6 +437,22 @@ types::Type *Module::unsafeGetUnionType(const std::vector<types::Type *> &types)
 
 void Module::pushArena() { arenas.emplace_back(); }
 
+void Module::hideVars(const std::function<bool(const Var *)> &pred) {
+  for (auto it = vars.begin(); it != vars.end();) {
+    auto next = std::next(it);
+    if (pred(it->get())) {
+      hiddenVarIds.insert((*it)->getId());
+      hiddenVars.splice(hiddenVars.end(), vars, it);
+    }
+    it = next;
+  }
+}
+
+void Module::unhideVars() {
+  vars.splice(vars.begin(), hiddenVars);
+  hiddenVarIds.clear();
+}
+
 void Module::popArena() {
   auto &arena = arenas.back();
   for (auto id : arena.values) {
@@ -450,7 +466,10 @@ void Module::popArena() {
     auto it = varMap.find(id);
     if (it == varMap.end())
       continue;
-    vars.erase(it->second);
+    if (hiddenVarIds.erase(id))
+      hiddenVars.erase(it->second);
+    else
+      vars.erase(it->second);
     varMap.erase(it);
   }
   for (auto &type : arena.types) {

@@ -2,10 +2,12 @@
 
 #pragma once
 
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "codon/cir/func.h"
 #include "codon/cir/util/iterators.h"
@@ -121,6 +123,11 @@ private:
   std::unique_ptr<Var> argVar;
   /// the global variables list
   std::list<std::unique_ptr<Var>> vars;
+  /// the global variables that hideVars removed from the list; varMap still points to
+  /// them
+  std::list<std::unique_ptr<Var>> hiddenVars;
+  /// the ids of the hidden global variables
+  std::unordered_set<id_t> hiddenVarIds;
   /// the global variables map
   std::unordered_map<id_t, std::list<std::unique_ptr<Var>>::iterator> varMap;
   /// the global value list
@@ -191,9 +198,24 @@ public:
   /// @param v the var
   void remove(const Var *v) {
     auto it = varMap.find(v->getId());
-    vars.erase(it->second);
+    if (hiddenVarIds.erase(v->getId()))
+      hiddenVars.erase(it->second);
+    else
+      vars.erase(it->second);
     varMap.erase(it);
   }
+
+  /// Hides the global variables and functions that match a predicate: iteration over
+  /// the module skips them, so passes and analyses see only the others. getVar still
+  /// finds them. Used to run passes only on the code that is new since an earlier
+  /// compilation.
+  /// @param pred the predicate
+  void hideVars(const std::function<bool(const Var *)> &pred);
+  /// Makes the hidden global variables and functions visible again, before the others.
+  void unhideVars();
+  /// @param id the id of a global variable or function
+  /// @return true if hideVars hid it
+  bool isHidden(id_t id) const { return hiddenVarIds.count(id) != 0; }
 
   /// @return iterator to the first value
   auto values_begin() { return util::raw_ptr_adaptor(values.begin()); }

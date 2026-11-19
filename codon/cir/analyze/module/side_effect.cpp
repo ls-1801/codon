@@ -118,7 +118,8 @@ struct SideEfectAnalyzer : public util::ConstVisitor {
     auto count2 = (it2 != vua.varAssignCounts.end()) ? it2->second : 0;
 
     bool global = var->isGlobal();
-    bool used = (count1 != count2);
+    // hidden code (Module::hideVars) can use a hidden global
+    bool used = (count1 != count2) || (global && var->getModule()->isHidden(id));
     Status defaultStatus = global ? Status::UNKNOWN : Status::NO_CAPTURE;
     auto se2stat = [&](bool b) { return b ? defaultStatus : Status::PURE; };
 
@@ -271,7 +272,11 @@ struct SideEfectAnalyzer : public util::ConstVisitor {
 
     auto *func = funcStack.back();
     auto it = cr->results.find(func->getId());
-    seqassertn(it != cr->results.end(), "function not found in capture results");
+    if (it == cr->results.end()) {
+      // a function that Module::hideVars hid
+      set(v, Status::UNKNOWN, Status::UNKNOWN);
+      return;
+    }
     auto captureInfo = it->second;
 
     bool pure = true;

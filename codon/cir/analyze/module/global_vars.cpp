@@ -21,7 +21,8 @@ struct GlobalVarAnalyzer : public util::Operator {
     auto *lhs = v->getLhs();
     auto id = lhs->getId();
     if (lhs->isGlobal()) {
-      if (assignments.find(id) != assignments.end()) {
+      // hidden code (Module::hideVars) can assign a hidden global
+      if (assignments.find(id) != assignments.end() || lhs->getModule()->isHidden(id)) {
         assignments[id] = -1;
       } else {
         assignments[id] = v->getRhs()->getId();
