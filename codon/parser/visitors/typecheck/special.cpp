@@ -669,8 +669,10 @@ Expr *TypecheckVisitor::transformIsInstance(CallExpr *expr) {
   }
 
   // A class with a method `__isinstance__(self, T: type) -> bool` answers at run time for a type it is not statically, e.g.
-  // a JSON value that holds a list or a dict.
-  if (!findMethod(typ->getClass(), "__isinstance__").empty()) {
+  // a JSON value that holds a list or a dict. Only in code outside the standard library (and its plugins), whose generic
+  // code relies on static isinstance to remove branches that would not compile.
+  if (ctx->moduleName.status != ImportFile::STDLIB &&
+      !findMethod(typ->getClass(), "__isinstance__").empty()) {
     return transform(N<CallExpr>(N<DotExpr>(expr->begin()->getExpr(), "__isinstance__"),
                                  (*expr)[1].getExpr()));
   }
@@ -826,8 +828,8 @@ Expr *TypecheckVisitor::transformTupleFn(CallExpr *expr) {
     return e;
   }
 
-  // A class with a method `__tuple__(self)` gives its own tuple, e.g. a JSON array.
-  if (!findMethod(cls, "__tuple__").empty())
+  // A class with a method `__tuple__(self)` gives its own tuple, e.g. a JSON array. Only outside the standard library.
+  if (ctx->moduleName.status != ImportFile::STDLIB && !findMethod(cls, "__tuple__").empty())
     return transform(N<CallExpr>(N<DotExpr>(expr->begin()->getExpr(), "__tuple__")));
 
   std::vector<Expr *> args;

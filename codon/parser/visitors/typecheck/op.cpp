@@ -78,9 +78,11 @@ void TypecheckVisitor::visit(UnaryExpr *expr) {
 /// Also evaluate static expressions. See @c evaluateStaticBinary for details.
 void TypecheckVisitor::visit(BinaryExpr *expr) {
   // `type(obj) == T` (also !=, is, is not) for a type T that is not the type of obj: a class with a method
-  // `__type_is__(self, T: type) -> bool` answers at run time, e.g. a JSON value that holds a list.
+  // `__type_is__(self, T: type) -> bool` answers at run time, e.g. a JSON value that holds a list. Only outside the
+  // standard library, as for isinstance.
   if (auto call = cast<CallExpr>(expr->getLhs());
-      call && call->size() == 1 && match(call->getExpr(), M<IdExpr>("type")) &&
+      call && ctx->moduleName.status != ImportFile::STDLIB && call->size() == 1 &&
+      match(call->getExpr(), M<IdExpr>("type")) &&
       (expr->op == "==" || expr->op == "!=" || expr->op == "is" || expr->op == "is not")) {
     call->begin()->value = transform(call->begin()->getExpr());
     expr->rexpr = transform(expr->getRhs(), true);
