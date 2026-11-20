@@ -119,6 +119,13 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
       stmt->expr = N<CallExpr>(N<IdExpr>("NoneType"));
     stmt->expr = transform(stmt->getExpr());
 
+    // In user code, a return whose value type is not known yet does not bind the return type yet: binding links the two,
+    // and a later return of another type (e.g. an Optional[str] argument returned as is) then also fixes the type of this
+    // value, which conflicts once the value resolves (e.g. to str). The statement is checked again in a later pass.
+    if (!isAsync && stmt->getExpr()->getType()->getUnbound() &&
+        ctx->getBase()->returnType->getUnbound() && inUserCode())
+      return;
+
     // A returned value whose type does not match the annotated return type T converts through `value.__as__(T)` if its
     // class (or the class in an Optional) has that method; a None in the Optional fails at run time, as when an Optional
     // is returned as its content type.
