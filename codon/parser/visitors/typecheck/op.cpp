@@ -81,7 +81,7 @@ void TypecheckVisitor::visit(BinaryExpr *expr) {
   // `__type_is__(self, T: type) -> bool` answers at run time, e.g. a JSON value that holds a list. Only outside the
   // standard library, as for isinstance.
   if (auto call = cast<CallExpr>(expr->getLhs());
-      call && ctx->moduleName.status != ImportFile::STDLIB && call->size() == 1 &&
+      call && inUserCode() && call->size() == 1 &&
       match(call->getExpr(), M<IdExpr>("type")) &&
       (expr->op == "==" || expr->op == "!=" || expr->op == "is" || expr->op == "is not")) {
     call->begin()->value = transform(call->begin()->getExpr());

@@ -177,6 +177,9 @@ public:
   virtual std::vector<path_t> get_stdlib_paths() const;
   virtual path_t canonical(const path_t &path) const;
   ImportFile get_root(const path_t &s) const;
+  /// Whether a module found in a search path (ImportFile::STDLIB) is library code (the standard library or a plugin), as
+  /// opposed to user code. By default it is; a filesystem with user modules in its search paths can tell them apart.
+  virtual bool is_library(const path_t &) const { return true; }
 
   virtual path_t get_module0() const { return ""; }
   virtual void set_module0(const std::string &) {}

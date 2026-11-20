@@ -372,6 +372,8 @@ public:
   Expr *transformPtr(CallExpr *);
   Expr *transformArray(CallExpr *);
   Expr *transformIsInstance(CallExpr *);
+  /// Whether the code being type checked is user code, not the standard library or a plugin (IFilesystem::is_library).
+  bool inUserCode() const;
   Expr *transformStaticLen(CallExpr *);
   Expr *transformHasAttr(CallExpr *);
   Expr *transformGetAttr(CallExpr *);
