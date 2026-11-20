@@ -341,6 +341,29 @@ types::Type *TypecheckVisitor::realizeType(types::ClassType *type) {
   return rt.get();
 }
 
+namespace {
+/// The kinds of `return` in a function body, without the ones of nested functions and classes: `return`/`return None`,
+/// and `return` with any other value.
+class ReturnKinds : public CallbackASTVisitor<void, void> {
+public:
+  bool none = false, value = false;
+  void transform(Expr *) override {}
+  void transform(Stmt *stmt) override {
+    if (stmt)
+      stmt->accept(*this);
+  }
+  void visit(ReturnStmt *stmt) override {
+    auto id = cast<IdExpr>(stmt->getExpr());
+    if (!stmt->getExpr() || cast<NoneExpr>(stmt->getExpr()) || (id && id->getValue() == "None"))
+      none = true;
+    else
+      value = true;
+  }
+  void visit(FunctionStmt *) override {}
+  void visit(ClassStmt *) override {}
+};
+} // namespace
+
 types::Type *TypecheckVisitor::realizeFunc(types::FuncType *type, bool force) {
   auto module = type->ast->getAttribute<ir::StringValueAttribute>(Attr::Module)->value;
   auto &realizations = getFunction(type->getFuncName())->realizations;
@@ -394,6 +417,16 @@ types::Type *TypecheckVisitor::realizeFunc(types::FuncType *type, bool force) {
 
   // Internal functions have no AST that can be realized
   bool hasAst = ast->getSuite() && !ast->hasAttribute(Attr::Internal);
+
+  // A function without return annotation that returns None and other values returns an Optional, as in Python;
+  // otherwise its type would be that of its first return, and a later None would fail at run time. Only in user code.
+  if (hasAst && !ast->getReturn() && !ast->hasAttribute(Attr::IsGenerator) &&
+      type->getRetType()->getUnbound() && inUserCode()) {
+    ReturnKinds kinds;
+    kinds.transform(ast->getSuite());
+    if (kinds.none && kinds.value)
+      unify(type->getRetType(), instantiateType(getStdLibType(TYPE_OPTIONAL)).get());
+  }
   // Add function arguments
   if (auto b = ast->getAttribute<BindingsAttribute>(Attr::Bindings)) {
     for (auto &[c, t] : b->captures) {
