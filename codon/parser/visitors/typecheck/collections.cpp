@@ -15,6 +15,40 @@ using namespace types;
 /// @example
 ///   `(a1, ..., aN)` -> `Tuple.__new__(a1, ..., aN)`
 void TypecheckVisitor::visit(TupleExpr *expr) {
+  // In a table (a tuple of tuples of one length), an empty list in a column of lists gets the element type of the first
+  // non-empty list there: `[]` becomes `List[type(e)]()`, with e its first element (type() does not evaluate e). Otherwise
+  // the empty list is a List[NoneType], and code that loops over the table does not compile for that row. Only in user
+  // code, as for the isinstance hooks.
+  if (inUserCode() && expr->items.size() > 1) {
+    auto rows = std::vector<TupleExpr *>();
+    auto first = cast<TupleExpr>(expr->items[0]);
+    for (auto *item : expr->items) {
+      auto row = cast<TupleExpr>(item);
+      if (first && row && row->items.size() == first->items.size())
+        rows.push_back(row);
+    }
+    if (first && rows.size() == expr->items.size()) {
+      for (size_t column = 0; column < rows[0]->items.size(); column++) {
+        Expr *element = nullptr;
+        bool allLists = true;
+        for (auto *row : rows) {
+          auto list = cast<ListExpr>(row->items[column]);
+          if (!list) {
+            allLists = false;
+            break;
+          }
+          if (!element && !list->items.empty() && !cast<StarExpr>(list->items[0]))
+            element = list->items[0];
+        }
+        if (!allLists || !element)
+          continue;
+        for (auto *row : rows)
+          if (cast<ListExpr>(row->items[column])->items.empty())
+            row->items[column] = N<CallExpr>(
+                N<IndexExpr>(N<IdExpr>("List"), N<CallExpr>(N<IdExpr>("type"), clone(element))));
+      }
+    }
+  }
   resultExpr =
       transform(N<CallExpr>(N<DotExpr>(N<IdExpr>(TYPE_TUPLE), "__new__"), expr->items));
 }
