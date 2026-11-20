@@ -364,6 +364,12 @@ public:
 };
 } // namespace
 
+std::pair<bool, bool> TypecheckVisitor::returnKinds(Stmt *suite) {
+  ReturnKinds kinds;
+  kinds.transform(suite);
+  return {kinds.none, kinds.value};
+}
+
 types::Type *TypecheckVisitor::realizeFunc(types::FuncType *type, bool force) {
   auto module = type->ast->getAttribute<ir::StringValueAttribute>(Attr::Module)->value;
   auto &realizations = getFunction(type->getFuncName())->realizations;
@@ -422,9 +428,8 @@ types::Type *TypecheckVisitor::realizeFunc(types::FuncType *type, bool force) {
   // otherwise its type would be that of its first return, and a later None would fail at run time. Only in user code.
   if (hasAst && !ast->getReturn() && !ast->hasAttribute(Attr::IsGenerator) &&
       type->getRetType()->getUnbound() && inUserCode()) {
-    ReturnKinds kinds;
-    kinds.transform(ast->getSuite());
-    if (kinds.none && kinds.value)
+    auto [returnsNone, returnsValue] = returnKinds(ast->getSuite());
+    if (returnsNone && returnsValue)
       unify(type->getRetType(), instantiateType(getStdLibType(TYPE_OPTIONAL)).get());
   }
   // Add function arguments

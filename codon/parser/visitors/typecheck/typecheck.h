@@ -374,6 +374,8 @@ public:
   Expr *transformIsInstance(CallExpr *);
   /// Whether the code being type checked is user code, not the standard library or a plugin (IFilesystem::is_library).
   bool inUserCode() const;
+  /// Whether a function body (without nested functions and classes) returns None, and whether it returns another value.
+  static std::pair<bool, bool> returnKinds(Stmt *suite);
   Expr *transformStaticLen(CallExpr *);
   Expr *transformHasAttr(CallExpr *);
   Expr *transformGetAttr(CallExpr *);

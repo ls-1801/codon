@@ -142,9 +142,25 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
           convertedType = extractClassGeneric(valueType)->getClass();
           value = N<CallExpr>(N<DotExpr>(value, "__val__"));
         }
-        if (score < 0 && convertedType && !findMethod(convertedType, "__as__").empty()) {
-          stmt->expr = transform(N<CallExpr>(N<DotExpr>(value, "__as__"),
-                                             N<IdExpr>(returnType->realizedName())));
+        // An Optional[X] return type converts to X; None stays None.
+        auto targetType = returnType;
+        if (returnType->is(TYPE_OPTIONAL))
+          targetType = extractClassGeneric(returnType)->getClass();
+        if (score < 0 && convertedType && targetType && !targetType->is(convertedType->name) &&
+            !findMethod(convertedType, "__as__").empty()) {
+          if (valueType->is(TYPE_OPTIONAL) && returnType->is(TYPE_OPTIONAL)) {
+            // `(v := value; None if v is None else Optional(v.__val__().__as__(X)))`
+            auto var = getTemporaryVar("ret");
+            stmt->expr = transform(N<StmtExpr>(
+                N<AssignStmt>(N<IdExpr>(var), stmt->getExpr()),
+                N<IfExpr>(N<BinaryExpr>(N<IdExpr>(var), "is", N<NoneExpr>()), N<NoneExpr>(),
+                          N<CallExpr>(N<IdExpr>(TYPE_OPTIONAL),
+                                      N<CallExpr>(N<DotExpr>(N<CallExpr>(N<DotExpr>(N<IdExpr>(var), "__val__")), "__as__"),
+                                                  N<IdExpr>(targetType->realizedName()))))));
+          } else {
+            stmt->expr = transform(N<CallExpr>(N<DotExpr>(value, "__as__"),
+                                               N<IdExpr>(targetType->realizedName())));
+          }
         }
       }
     }
@@ -544,6 +560,18 @@ void TypecheckVisitor::visit(FunctionStmt *stmt) {
               extractType(transformType((*stmt)[ai].getType(), true)));
       }
       aj++;
+    }
+
+    // In user code, a function annotated -> T whose body returns None returns Optional[T]: CPython does not enforce the
+    // annotation, so such a function returns None as well.
+    if (stmt->getReturn() && stmt->getSuite() && inUserCode() &&
+        returnKinds(stmt->getSuite()).first) {
+      auto annotation = stmt->getReturn();
+      auto index = cast<IndexExpr>(annotation);
+      bool optional = (index && isId(index->getExpr(), "Optional")) || isId(annotation, "None") ||
+                      isId(annotation, "NoneType") || isId(annotation, "Optional");
+      if (!optional)
+        stmt->ret = N<IndexExpr>(N<IdExpr>("Optional"), annotation);
     }
 
     // Parse the return type
