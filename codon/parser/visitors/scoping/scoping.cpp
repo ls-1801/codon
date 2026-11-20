@@ -540,6 +540,7 @@ void ScopingVisitor::visit(FunctionStmt *stmt) {
   if (ctx->inClass && !stmt->empty())
     c->classDeduce = {stmt->front().getName(), {}};
   c->renames = ctx->renames;
+  c->functionCaptures = ctx->functionCaptures;
   ScopingVisitor v;
   c->scope.emplace_back(0);
   v.ctx = c;
@@ -560,6 +561,26 @@ void ScopingVisitor::visit(FunctionStmt *stmt) {
     errors.append(v.errors);
   if (!canContinue())
     return;
+
+  // Reading a nested function of an enclosing function also captures what that function captures (unless bound here).
+  for (bool changed = true; changed;) {
+    changed = false;
+    std::vector<std::string> read;
+    for (const auto &[name, _] : c->captures)
+      read.push_back(name);
+    for (const auto &name : read) {
+      if (auto nested = in(c->functionCaptures, name)) {
+        for (const auto &[captured, type] : *nested) {
+          if (!in(c->captures, captured) && !in(c->map, captured)) {
+            c->captures[captured] = type;
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+  if (ctx->functionScope && !c->captures.empty())
+    ctx->functionCaptures[stmt->getName()] = c->captures;
 
   auto b = std::make_unique<BindingsAttribute>();
   b->captures = c->captures;

@@ -90,6 +90,11 @@ class ScopingVisitor : public CallbackASTVisitor<bool, bool> {
     std::unordered_map<std::string, std::list<Item>> map;
 
     std::unordered_map<std::string, BindingsAttribute::CaptureType> captures;
+    /// Captures of the nested functions defined so far in the enclosing functions, by name. A function that reads such a
+    /// function also captures what it captures, as the reference supplies those captures from the reading function.
+    std::unordered_map<std::string,
+                       std::unordered_map<std::string, BindingsAttribute::CaptureType>>
+        functionCaptures;
     std::unordered_map<std::string, BindingsAttribute::CaptureType>
         childCaptures; // for functions!
     std::map<std::string, SrcInfo> firstSeen;
