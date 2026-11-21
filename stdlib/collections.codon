@@ -144,30 +144,6 @@ class deque:
             assert 0 <= idx < self._tail
             return self._arr[idx]
 
-@tuple
-class _CounterItem:
-    element: T
-    count: int
-    T: type
-
-    def __eq__(self, other: _CounterItem[T]) -> bool:
-        return self.count == other.count
-
-    def __ne__(self, other: _CounterItem[T]) -> bool:
-        return self.count != other.count
-
-    def __lt__(self, other: _CounterItem[T]) -> bool:
-        return self.count < other.count
-
-    def __gt__(self, other: _CounterItem[T]) -> bool:
-        return self.count > other.count
-
-    def __le__(self, other: _CounterItem[T]) -> bool:
-        return self.count <= other.count
-
-    def __ge__(self, other: _CounterItem[T]) -> bool:
-        return self.count >= other.count
-
 class Counter(Static[Dict[T, int]]):
     T: type
 
@@ -197,33 +173,13 @@ class Counter(Static[Dict[T, int]]):
             v.sort(reverse=True, key=lambda i: i[1])
             return v
         else:
-            from heapq import heapify, heapreplace
+            # As in CPython: heapq.nlargest is stable, so equal counts come in the order the elements were first seen.
+            from heapq import nlargest
 
             n: int = n
-
-            if n == 1:
-                top: Optional[Tuple[T, int]] = None
-                for t in self.items():
-                    if top is None or t[1] > top[1]:
-                        top = t
-                return [unwrap(top)]
-
             if n <= 0:
                 return []
-
-            result = List[_CounterItem](capacity=n)
-            for t in self.items():
-                ct = _CounterItem(*t)
-                if len(result) < n:
-                    result.append(ct)
-                    if len(result) == n:
-                        heapify(result)
-                else:
-                    if result[0] < ct:
-                        heapreplace(result, ct)
-
-            result.sort(reverse=True)
-            return [tuple(i) for i in result]
+            return nlargest(n, self.items(), key=lambda t: t[1])
 
     def subtract(self, elements: Generator[T]):
         for a in elements:
