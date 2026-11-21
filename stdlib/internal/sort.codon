@@ -65,6 +65,10 @@ class List:
         reverse: bool = False,
         algorithm: Literal[str] = "auto",
     ):
+        # Reversed before and after the sort, as in CPython: equal elements keep their order, so the stable sorts
+        # stay stable for reverse=True.
+        if reverse:
+            self.reverse()
         if isinstance(key, Optional):
             if algorithm == "auto":
                 # Python uses Timsort in all cases, but if we
@@ -83,3 +87,4 @@ class List:
             _sort_list(self, key, algorithm)
         if reverse:
             self.reverse()
+
