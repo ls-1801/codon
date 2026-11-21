@@ -735,58 +735,63 @@ class DynamicTuple:
 
 @extend
 class Dict:
+    # _index has _n_buckets slots; _hashes, _keys and _vals have _capacity entries, of which the first _n_entries
+    # are in use (a deleted one has the hash -1).
     def __to_gpu__(self, cache: AllocCache):
-        from internal.khash import __ac_fsize
         mem = Dict[K,V].__new__()
         n = self._n_buckets
-        f = __ac_fsize(n) if n else 0
+        c = self._capacity
 
         mem._n_buckets = n
         mem._size = self._size
-        mem._n_occupied = self._n_occupied
-        mem._upper_bound = self._upper_bound
-        mem._flags = _ptr_to_gpu(self._flags, f, cache)
-        mem._keys = _ptr_to_gpu(self._keys, n, cache, lambda i: self._kh_exist(i))
-        mem._vals = _ptr_to_gpu(self._vals, n, cache, lambda i: self._kh_exist(i))
+        mem._n_entries = self._n_entries
+        mem._capacity = c
+        mem._fill = self._fill
+        mem._index = _ptr_to_gpu(self._index, n, cache)
+        mem._hashes = _ptr_to_gpu(self._hashes, c, cache)
+        mem._keys = _ptr_to_gpu(self._keys, c, cache, lambda i: i < self._n_entries and self._kh_exist(i))
+        mem._vals = _ptr_to_gpu(self._vals, c, cache, lambda i: i < self._n_entries and self._kh_exist(i))
 
         return _object_to_gpu(mem, cache)
 
     def __from_gpu__(self, other: Dict[K,V]):
-        from internal.khash import __ac_fsize
         mem = _object_from_gpu(other)
-        my_n = self._n_buckets
         n = mem._n_buckets
-        f = __ac_fsize(n) if n else 0
+        c = mem._capacity
 
-        if my_n != n:
-            self._flags = Ptr[u32](f)
-            self._keys = Ptr[K](n)
-            self._vals = Ptr[V](n)
-
-        _ptr_from_gpu(self._flags, mem._flags, f)
-        _ptr_from_gpu(self._keys, mem._keys, n, lambda i: self._kh_exist(i))
-        _ptr_from_gpu(self._vals, mem._vals, n, lambda i: self._kh_exist(i))
+        if self._n_buckets != n or self._capacity != c:
+            self._index = Ptr[int](n)
+            self._hashes = Ptr[int](c)
+            self._keys = Ptr[K](c)
+            self._vals = Ptr[V](c)
 
         self._n_buckets = n
         self._size = mem._size
-        self._n_occupied = mem._n_occupied
-        self._upper_bound = mem._upper_bound
+        self._n_entries = mem._n_entries
+        self._capacity = c
+        self._fill = mem._fill
+        _ptr_from_gpu(self._index, mem._index, n)
+        _ptr_from_gpu(self._hashes, mem._hashes, c)
+        _ptr_from_gpu(self._keys, mem._keys, c, lambda i: i < self._n_entries and self._kh_exist(i))
+        _ptr_from_gpu(self._vals, mem._vals, c, lambda i: i < self._n_entries and self._kh_exist(i))
 
     def __from_gpu_new__(other: Dict[K,V]):
-        from internal.khash import __ac_fsize
         mem = _object_from_gpu(other)
-
         n = mem._n_buckets
-        f = __ac_fsize(n) if n else 0
-        flags = Ptr[u32](f)
-        keys = Ptr[K](n)
-        vals = Ptr[V](n)
+        c = mem._capacity
 
-        _ptr_from_gpu(flags, mem._flags, f)
-        mem._flags = flags
-        _ptr_from_gpu(keys, mem._keys, n, lambda i: mem._kh_exist(i))
+        index = Ptr[int](n)
+        hashes = Ptr[int](c)
+        keys = Ptr[K](c)
+        vals = Ptr[V](c)
+
+        _ptr_from_gpu(index, mem._index, n)
+        mem._index = index
+        _ptr_from_gpu(hashes, mem._hashes, c)
+        mem._hashes = hashes
+        _ptr_from_gpu(keys, mem._keys, c, lambda i: i < mem._n_entries and mem._kh_exist(i))
         mem._keys = keys
-        _ptr_from_gpu(vals, mem._vals, n, lambda i: mem._kh_exist(i))
+        _ptr_from_gpu(vals, mem._vals, c, lambda i: i < mem._n_entries and mem._kh_exist(i))
         mem._vals = vals
         return mem
 
