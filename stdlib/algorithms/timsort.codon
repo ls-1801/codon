@@ -62,13 +62,15 @@ def _count_run(
     if end - begin == 1:
         return 1, inorder
 
+    # As in CPython, a descending run is strictly descending, because it is reversed: equal elements in it would
+    # change their order. An ascending run takes equal elements.
     n = 2
     i = begin + 1
-    if keyf(arr[i - 1]) >= keyf(arr[i]):
+    if keyf(arr[i]) < keyf(arr[i - 1]):
         inorder = 0
         i += 1
         while i < end:
-            if keyf(arr[i - 1]) < keyf(arr[i]):
+            if not (keyf(arr[i]) < keyf(arr[i - 1])):
                 break
             i += 1
             n += 1
@@ -76,7 +78,7 @@ def _count_run(
     else:
         i += 1
         while i < end:
-            if keyf(arr[i - 1]) >= keyf(arr[i]):
+            if keyf(arr[i]) < keyf(arr[i - 1]):
                 break
             i += 1
             n += 1
