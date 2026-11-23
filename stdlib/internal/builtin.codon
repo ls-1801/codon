@@ -307,6 +307,57 @@ def __nes_unpack__(x):
     else:
         return list(x)
 
+def ascii(x):
+    """NES: repr(x) with every non-ASCII character escaped as \\xNN, \\uNNNN or \\UNNNNNNNN, as Python's ascii()."""
+    r = repr(x)
+    n = r.len  # bytes: len() and slicing may count code points (NES unicode plugin)
+    p = r.ptr
+    i = 0
+    plain = True
+    while i < n:
+        if int(p[i]) >= 128:
+            plain = False
+            break
+        i += 1
+    if plain:
+        return r
+    out = ""
+    start = 0
+    hexdigits = "0123456789abcdef"
+    while i < n:
+        b = int(p[i])
+        if b < 128:
+            i += 1
+            continue
+        out += str(p + start, i - start)
+        if b >= 0xF0 and i + 3 < n:
+            cp = ((b & 0x07) << 18) | ((int(p[i + 1]) & 0x3F) << 12) | ((int(p[i + 2]) & 0x3F) << 6) | (int(p[i + 3]) & 0x3F)
+            i += 4
+        elif b >= 0xE0 and i + 2 < n:
+            cp = ((b & 0x0F) << 12) | ((int(p[i + 1]) & 0x3F) << 6) | (int(p[i + 2]) & 0x3F)
+            i += 3
+        elif b >= 0xC0 and i + 1 < n:
+            cp = ((b & 0x1F) << 6) | (int(p[i + 1]) & 0x3F)
+            i += 2
+        else:
+            cp = b
+            i += 1
+        if cp < 0x100:
+            out += "\\x" + hexdigits[cp >> 4] + hexdigits[cp & 15]
+        elif cp < 0x10000:
+            out += "\\u"
+            for sh in (12, 8, 4, 0):
+                out += hexdigits[(cp >> sh) & 15]
+        else:
+            out += "\\U"
+            for sh in (28, 24, 20, 16, 12, 8, 4, 0):
+                out += hexdigits[(cp >> sh) & 15]
+        start = i
+        while i < n and int(p[i]) < 128:
+            i += 1
+    out += str(p + start, n - start)
+    return out
+
 def repr(x):
     if not hasattr(x, "__repr__") and hasattr(x, "__repr_default__"):
         return x.__repr_default__()

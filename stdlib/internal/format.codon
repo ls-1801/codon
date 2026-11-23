@@ -228,3 +228,250 @@ class __magic__:
     def repr_partial(slf) -> str:
         h = slf.__class__.__name__
         return f"partial({h})"
+
+
+# NES: printf-style formatting, `"%05d|%-6s|%.3f" % (n, s, x)` and `"%(name)s" % mapping`, as Python's str.__mod__.
+# The format string is parsed at run time; the arguments of a tuple are walked by a static loop, so each keeps its
+# type. Not supported: `*` as width or precision, and a tuple subclass (namedtuple) as the argument tuple.
+
+_PRINTF_MINUS = 1
+_PRINTF_PLUS = 2
+_PRINTF_SPACE = 4
+_PRINTF_ALT = 8
+_PRINTF_ZERO = 16
+
+@tuple
+class _PrintfSpec:
+    key: str
+    flags: int
+    width: int
+    prec: int
+    conv: str
+
+def _printf_parse(fmt: str):
+    lits = List[str]()
+    specs = List[_PrintfSpec]()
+    n = len(fmt)
+    i = 0
+    start = 0
+    cur = ""
+    while i < n:
+        if fmt[i] != "%":
+            i += 1
+            continue
+        cur += fmt[start:i]
+        j = i + 1
+        key = ""
+        has_key = False
+        if j < n and fmt[j] == "(":
+            depth = 1
+            k = j + 1
+            while k < n and depth > 0:
+                if fmt[k] == "(":
+                    depth += 1
+                elif fmt[k] == ")":
+                    depth -= 1
+                k += 1
+            if depth > 0:
+                raise ValueError("incomplete format key")
+            key = fmt[j + 1:k - 1]
+            has_key = True
+            j = k
+        flags = 0
+        while j < n:
+            c = fmt[j]
+            if c == "-":
+                flags |= _PRINTF_MINUS
+            elif c == "+":
+                flags |= _PRINTF_PLUS
+            elif c == " ":
+                flags |= _PRINTF_SPACE
+            elif c == "#":
+                flags |= _PRINTF_ALT
+            elif c == "0":
+                flags |= _PRINTF_ZERO
+            else:
+                break
+            j += 1
+        width = -1
+        if j < n and fmt[j] == "*":
+            raise NotImplementedError("'*' as width in %-formatting is not supported")
+        while j < n and fmt[j].isdigit():
+            width = (0 if width < 0 else width * 10) + (ord(fmt[j]) - 48)
+            j += 1
+        prec = -1
+        if j < n and fmt[j] == ".":
+            j += 1
+            prec = 0
+            if j < n and fmt[j] == "*":
+                raise NotImplementedError("'*' as precision in %-formatting is not supported")
+            while j < n and fmt[j].isdigit():
+                prec = prec * 10 + (ord(fmt[j]) - 48)
+                j += 1
+        while j < n and (fmt[j] == "h" or fmt[j] == "l" or fmt[j] == "L"):
+            j += 1
+        if j >= n:
+            raise ValueError("incomplete format")
+        conv = fmt[j]
+        if conv == "%" and not has_key:
+            cur += "%"
+        elif conv in "diouxXeEfFgGcrsa":
+            lits.append(cur)
+            cur = ""
+            specs.append(_PrintfSpec(key if has_key else "\0", flags, width, prec, conv))
+        else:
+            raise ValueError(f"unsupported format character '{conv}' ({hex(ord(conv))}) at index {j}")
+        i = j + 1
+        start = i
+    cur += fmt[start:]
+    lits.append(cur)
+    return lits, specs
+
+def _printf_pad(sp: _PrintfSpec, body: str, head: int, numeric: bool) -> str:
+    if sp.width <= len(body):
+        return body
+    fill = sp.width - len(body)
+    if sp.flags & _PRINTF_MINUS:
+        return body + " " * fill
+    if numeric and (sp.flags & _PRINTF_ZERO):
+        return body[:head] + "0" * fill + body[head:]
+    return " " * fill + body
+
+def _printf_sign(sp: _PrintfSpec, neg: bool) -> str:
+    if neg:
+        return "-"
+    if sp.flags & _PRINTF_PLUS:
+        return "+"
+    if sp.flags & _PRINTF_SPACE:
+        return " "
+    return ""
+
+def _printf_int(sp: _PrintfSpec, v: int) -> str:
+    neg = v < 0
+    conv = sp.conv
+    prefix = ""
+    if conv == "x":
+        digits = (-v if neg else v).__format__("x")
+        if sp.flags & _PRINTF_ALT:
+            prefix = "0x"
+    elif conv == "X":
+        digits = (-v if neg else v).__format__("X")
+        if sp.flags & _PRINTF_ALT:
+            prefix = "0X"
+    elif conv == "o":
+        digits = (-v if neg else v).__format__("o")
+        if sp.flags & _PRINTF_ALT:
+            prefix = "0o"
+    else:
+        digits = str(v)
+        if neg:
+            digits = digits[1:]
+    if sp.prec > len(digits):
+        digits = "0" * (sp.prec - len(digits)) + digits
+    head = _printf_sign(sp, neg) + prefix
+    return _printf_pad(sp, head + digits, len(head), True)
+
+def _printf_float(sp: _PrintfSpec, v: float) -> str:
+    spec = ""
+    if sp.flags & _PRINTF_PLUS:
+        spec += "+"
+    elif sp.flags & _PRINTF_SPACE:
+        spec += " "
+    if sp.flags & _PRINTF_ALT:
+        spec += "#"
+    spec += "." + str(6 if sp.prec < 0 else sp.prec) + sp.conv
+    body = v.__format__(spec)
+    finite = v == v and v != float("inf") and v != -float("inf")
+    head = 1 if body and (body[0] == "-" or body[0] == "+" or body[0] == " ") else 0
+    return _printf_pad(sp, body, head, finite)
+
+def _printf_text(sp: _PrintfSpec, s: str) -> str:
+    if sp.prec >= 0:
+        s = s[:sp.prec]
+    return _printf_pad(sp, s, 0, False)
+
+def _printf_one(sp: _PrintfSpec, v) -> str:
+    conv = sp.conv
+    if conv == "s":
+        return _printf_text(sp, str(v))
+    if conv == "r":
+        return _printf_text(sp, repr(v))
+    if conv == "a":
+        return _printf_text(sp, ascii(v))
+    if conv == "c":
+        if isinstance(v, int):
+            return _printf_text(sp, chr(v))
+        elif isinstance(v, str):
+            if len(v) != 1:
+                raise TypeError(f"%c requires an int or a unicode character, not a string of length {len(v)}")
+            return _printf_text(sp, v)
+        else:
+            raise TypeError(f"%c requires an int or a unicode character, not {v.__class__.__name__}")
+    if conv in "diu":
+        if isinstance(v, bool):
+            return _printf_int(sp, int(v))
+        elif isinstance(v, int):
+            return _printf_int(sp, v)
+        elif isinstance(v, float):
+            if v != v:
+                raise ValueError("cannot convert float NaN to integer")
+            if v == float("inf") or v == -float("inf"):
+                raise OverflowError("cannot convert float infinity to integer")
+            return _printf_int(sp, int(v))
+        else:
+            raise TypeError(f"%{conv} format: a real number is required, not {v.__class__.__name__}")
+    if conv in "oxX":
+        if isinstance(v, bool):
+            return _printf_int(sp, int(v))
+        elif isinstance(v, int):
+            return _printf_int(sp, v)
+        else:
+            raise TypeError(f"%{conv} format: an integer is required, not {v.__class__.__name__}")
+    # e E f F g G
+    if isinstance(v, bool):
+        return _printf_float(sp, float(int(v)))
+    elif isinstance(v, int):
+        return _printf_float(sp, float(v))
+    elif isinstance(v, float):
+        return _printf_float(sp, v)
+    else:
+        raise TypeError(f"must be real number, not {v.__class__.__name__}")
+
+def _printf_check_count(specs: List[_PrintfSpec], n: int):
+    if len(specs) > n:
+        raise TypeError("not enough arguments for format string")
+    if len(specs) < n:
+        raise TypeError("not all arguments converted during string formatting")
+
+@extend
+class str:
+    def __mod__(self, args) -> str:
+        lits, specs = _printf_parse(self)
+        out = lits[0]
+        if isinstance(args, Tuple):
+            _printf_check_count(specs, static.len(args))
+            i = 0
+            for v in args:
+                if specs[i].key != "\0":
+                    raise TypeError("format requires a mapping")
+                out += _printf_one(specs[i], v) + lits[i + 1]
+                i += 1
+            return out
+        else:
+            keyed = False
+            for sp in specs:
+                if sp.key != "\0":
+                    keyed = True
+            if keyed:
+                if isinstance(args, Dict):
+                    for i in range(len(specs)):
+                        if specs[i].key == "\0":
+                            raise TypeError("format requires a mapping")
+                        out += _printf_one(specs[i], args[specs[i].key]) + lits[i + 1]
+                    return out
+                else:
+                    raise TypeError("format requires a mapping")
+            if isinstance(args, Dict) and len(specs) == 0:
+                return out
+            _printf_check_count(specs, 1)
+            return out + _printf_one(specs[0], args) + lits[1]
