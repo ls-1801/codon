@@ -329,7 +329,10 @@ void TypecheckVisitor::visit(DotExpr *expr) {
                                                      "_thunk_dispatch")),
                           std::vector<CallArg>{
                               CallArg{"slf", slf}, CallArg{"cls_id", id},
-                              CallArg{"F", N<IdExpr>(bestMethod->ast->name)},
+                              // NES: the method instantiated for the receiver's class, so that the
+                              // generics of a generic class (e.g. inferred fields) are the receiver's,
+                              // not unbound (they defaulted to NoneType: `val[A[NoneType]]` for A[int]).
+                              CallArg{"F", e},
                               CallArg{"", N<EllipsisExpr>(EllipsisExpr::PARTIAL)}}));
           return;
         }
