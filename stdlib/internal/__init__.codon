@@ -57,5 +57,7 @@ from asyncio import Future as _Future
 
 if __py_numerics__:
     import internal.pynumerics
+else:
+    import internal.cnumerics
 if __py_extension__:
     internal.python.ensure_initialized()

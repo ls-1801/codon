@@ -1,0 +1,33 @@
+# Copyright (C) 2022-2026 Exaloop Inc. <https://exaloop.io>
+
+# Integer // and % with C numerics (truncation) that do not end the process: x86 raises SIGFPE for a division by zero and
+# for the smallest int divided by -1. A zero divisor raises ZeroDivisionError as in Python; a divisor of -1 negates, which
+# wraps for the smallest int as the other int operations do.
+
+@pure
+@llvm
+def _sdiv_int_int(self: int, other: int) -> int:
+    %0 = sdiv i64 %self, %other
+    ret i64 %0
+
+@pure
+@llvm
+def _srem_int_int(self: int, other: int) -> int:
+    %0 = srem i64 %self, %other
+    ret i64 %0
+
+@extend
+class int:
+    def __floordiv__(self, other: int) -> int:
+        if other == 0:
+            raise ZeroDivisionError("integer division or modulo by zero")
+        if other == -1:
+            return -self
+        return _sdiv_int_int(self, other)
+
+    def __mod__(self, other: int) -> int:
+        if other == 0:
+            raise ZeroDivisionError("integer division or modulo by zero")
+        if other == -1:
+            return 0
+        return _srem_int_int(self, other)

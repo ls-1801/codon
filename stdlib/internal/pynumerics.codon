@@ -56,6 +56,9 @@ def _mod_float_float(self: float, other: float) -> float:
     ret double %0
 
 def _divmod_int_int(self: int, other: int):
+    if other == -1:
+        # sdiv of the smallest int by -1 raises SIGFPE; -self wraps as the other int operations do.
+        return (-self, 0)
     d = _floordiv_int_int(self, other)
     m = self - d * other
     if m and ((other ^ m) < 0):
