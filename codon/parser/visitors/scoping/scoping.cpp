@@ -584,6 +584,16 @@ void ScopingVisitor::visit(FunctionStmt *stmt) {
       stmt->setAttribute(Attr::Property);
     } else if (isId(d, "staticmethod")) {
       stmt->setAttribute(Attr::StaticMethod);
+    } else if (isId(d, "classmethod")) {
+      // NES: a classmethod is a static method whose first parameter (cls) is a type parameter; access passes the
+      // class (`C.m(x)` -> `C.m(C, x)`, `obj.m(x)` -> `C.m(type(obj), x)`), so `cls(...)` and `cls.attr` resolve at
+      // compile time, also for a subclass that inherits the method.
+      stmt->setAttribute(Attr::StaticMethod);
+      stmt->setAttribute(Attr::ClassMethod);
+      for (auto &a : *stmt) {
+        a.type = N<IdExpr>(TYPE_TYPE);
+        break;
+      }
     } else if (isId(d, "__force__")) {
       stmt->setAttribute(Attr::ForceRealize);
     } else if (isId(d, "C")) {

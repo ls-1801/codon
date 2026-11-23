@@ -61,7 +61,9 @@ struct Attr {
     ExprTime,
     ExprDoNotRealize,
     ExprNoSpecial,
-    TryPyVar
+    TryPyVar,
+    // NES: @classmethod (also StaticMethod; the first parameter is the class, a type parameter)
+    ClassMethod
   };
 };
 } // namespace codon::ast

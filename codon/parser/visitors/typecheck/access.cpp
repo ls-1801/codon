@@ -236,6 +236,22 @@ void TypecheckVisitor::visit(DotExpr *expr) {
       Expr *e = N<IdExpr>(bestMethod->getFuncName());
       e->setType(instantiateType(bestMethod, typ));
 
+      if (bestMethod->ast->hasAttribute(Attr::ClassMethod)) {
+        // NES: classmethod: pass the class as the first argument.
+        Expr *clsExpr = isTypeExpr(expr->getExpr())
+                            ? expr->getExpr()
+                            : N<CallExpr>(N<IdExpr>("type"), expr->getExpr());
+        if (parentCall) {
+          parentCall->items.insert(parentCall->items.begin(), clsExpr);
+          unify(expr->getType(), e->getType());
+          resultExpr = transform(e);
+        } else {
+          resultExpr = transform(N<CallExpr>(
+              e, std::vector<Expr *>{clsExpr, N<EllipsisExpr>(EllipsisExpr::PARTIAL)}));
+        }
+        return;
+      }
+
       if (isTypeExpr(expr->getExpr())) {
         // Static access: `cls.method`
         unify(expr->getType(), e->getType());
