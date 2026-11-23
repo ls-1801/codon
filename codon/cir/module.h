@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -282,9 +283,20 @@ public:
   /// Removes a given type.
   /// @param t the type
   void remove(types::Type *t) {
-    auto it = typesMap.find(t->getName());
-    types.erase(it->second);
-    typesMap.erase(it);
+    // The list may hold several types of one name (store() maps the name to the last one), and a type's name can
+    // follow another type (getActual), so the entry is found by pointer, not by name: a lookup by name would remove
+    // and free another type, or find no entry.
+    auto listIt = std::find_if(types.begin(), types.end(),
+                               [t](const auto &owned) { return owned.get() == t; });
+    if (listIt == types.end())
+      return;
+    for (auto it = typesMap.begin(); it != typesMap.end(); ++it) {
+      if (it->second == listIt) {
+        typesMap.erase(it);
+        break;
+      }
+    }
+    types.erase(listIt);
   }
 
   /// Constructs and registers an IR node with provided source information.
