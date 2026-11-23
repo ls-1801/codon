@@ -802,6 +802,22 @@ Expr *TypecheckVisitor::transformBinarySimple(const BinaryExpr *expr) {
         auto ve = N<AssignExpr>(N<IdExpr>(vn), expr->getLhs());
         if (lt->realizedName() == rt->realizedName()) {
           return N<IfExpr>(ve, expr->getRhs(), N<IdExpr>(vn));
+        } else if (lt->is(TYPE_OPTIONAL) && !rt->is(TYPE_OPTIONAL)) {
+          // NES: `x and y` with x: Optional[T] gives x (None or a false T) or y. A Union with an Optional member does
+          // not work (its methods are not found and values are read wrongly), so the result is Optional[T] if y is a
+          // T, and Optional[Union[T, Y]] otherwise.
+          auto inner = extractClassGeneric(lt)->realizedName();
+          if (inner == rt->realizedName())
+            return N<IfExpr>(ve, expr->getRhs(), N<IdExpr>(vn));
+          auto U = N<InstantiateExpr>(
+              N<IdExpr>("Union"),
+              std::vector<Expr *>{N<IdExpr>(inner), N<IdExpr>(rt->realizedName())});
+          auto O = N<InstantiateExpr>(N<IdExpr>(TYPE_OPTIONAL), std::vector<Expr *>{U});
+          auto unwrapped = N<CallExpr>(N<IdExpr>(FN_OPTIONAL_UNWRAP), N<IdExpr>(vn));
+          return N<IfExpr>(
+              ve, N<CallExpr>(O, N<CallExpr>(clone(U), expr->getRhs())),
+              N<IfExpr>(N<BinaryExpr>(N<IdExpr>(vn), "is", N<NoneExpr>()), N<CallExpr>(clone(O)),
+                        N<CallExpr>(clone(O), N<CallExpr>(clone(U), unwrapped))));
         } else {
           auto T = N<InstantiateExpr>(
               N<IdExpr>("Union"), std::vector<Expr *>{N<IdExpr>(lt->realizedName()),
@@ -824,6 +840,21 @@ Expr *TypecheckVisitor::transformBinarySimple(const BinaryExpr *expr) {
         auto vn = getTemporaryVar("cond");
         auto ve = N<AssignExpr>(N<IdExpr>(vn), expr->getLhs());
         if (lt->realizedName() == rt->realizedName()) {
+          return N<IfExpr>(ve, N<IdExpr>(vn), expr->getRhs());
+        } else if (lt->is(TYPE_OPTIONAL) && !rt->is(TYPE_OPTIONAL)) {
+          // NES: `x or y` with x: Optional[T] gives x only if x is true, so not None: the result is a T if y is a T, and
+          // Union[T, Y] otherwise. A Union with an Optional member does not work.
+          auto inner = extractClassGeneric(lt)->realizedName();
+          auto unwrapped = N<CallExpr>(N<IdExpr>(FN_OPTIONAL_UNWRAP), N<IdExpr>(vn));
+          if (inner == rt->realizedName())
+            return N<IfExpr>(ve, unwrapped, expr->getRhs());
+          auto U = N<InstantiateExpr>(
+              N<IdExpr>(getMangledClass("std.internal.core", "Union")),
+              std::vector<Expr *>{N<IdExpr>(inner), N<IdExpr>(rt->realizedName())});
+          return N<IfExpr>(ve, N<CallExpr>(U, unwrapped), N<CallExpr>(clone(U), expr->getRhs()));
+        } else if (rt->is(TYPE_OPTIONAL) && !lt->is(TYPE_OPTIONAL) &&
+                   extractClassGeneric(rt)->realizedName() == lt->realizedName()) {
+          // NES: `x or y` with x: T and y: Optional[T] is an Optional[T].
           return N<IfExpr>(ve, N<IdExpr>(vn), expr->getRhs());
         } else {
           auto T = N<InstantiateExpr>(
