@@ -2,6 +2,15 @@
 
 import internal.gc as gc
 
+def _list_same(a, b):
+    # NES: CPython compares list elements with 'is' first, so a list finds the NaN object it holds. Floats have no
+    # identity here; with Python numerics (PYTHON_COMPAT), a NaN element matches a NaN instead.
+    if __py_numerics__:
+        if isinstance(a, float) and isinstance(b, float):
+            return a == b or (a != a and b != b)
+    return a == b
+
+
 @extend
 class List:
     @staticmethod
@@ -76,7 +85,7 @@ class List:
         if self.__len__() != other.__len__():
             return False
         for i in range(self.__len__()):
-            if self._get(i) != other._get(i):
+            if not _list_same(self._get(i), other._get(i)):
                 return False
         return True
 
@@ -180,7 +189,7 @@ class List:
 
     def __contains__(self, x: T) -> bool:
         for a in self:
-            if a == x:
+            if _list_same(a, x):
                 return True
         return False
 
@@ -328,7 +337,7 @@ class List:
     def remove(self, x: T) -> bool:
         i = 0
         for a in self:
-            if a == x:
+            if _list_same(a, x):
                 del self[i]
                 return True
             i += 1
@@ -340,7 +349,7 @@ class List:
     def index(self, x: T) -> int:
         i = 0
         for a in self:
-            if a == x:
+            if _list_same(a, x):
                 return i
             i += 1
         raise ValueError(f"{x} is not in list")
@@ -356,7 +365,7 @@ class List:
     def count(self, x: T) -> int:
         count = 0
         for a in self:
-            if a == x:
+            if _list_same(a, x):
                 count += 1
         return count
 

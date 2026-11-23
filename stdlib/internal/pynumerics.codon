@@ -171,3 +171,49 @@ class float:
         if other == 0:
             raise ZeroDivisionError("float divmod()")
         return _divmod_float_float(self, float(other))
+
+# NES: float ** and int(float) raise as in CPython. CPython returns a complex number for a negative base and a
+# fractional exponent; Codon has no such result type, so that case raises ValueError.
+
+@pure
+@llvm
+def _pow_float_float(a: float, b: float) -> float:
+    declare double @llvm.pow.f64(double %a, double %b)
+    %tmp = call double @llvm.pow.f64(double %a, double %b)
+    ret double %tmp
+
+@pure
+@llvm
+def _fptosi_float(a: float) -> int:
+    %0 = fptosi double %a to i64
+    ret i64 %0
+
+def _checked_pow(a: float, b: float) -> float:
+    r = _pow_float_float(a, b)
+    finite_a = a - a == 0.0
+    finite_b = b - b == 0.0
+    if finite_a and finite_b:
+        if r != r:
+            raise ValueError("negative number cannot be raised to a fractional power")
+        if r - r != 0.0:
+            if a == 0.0:
+                raise ZeroDivisionError("zero to a negative power")
+            raise OverflowError("(34, 'Numerical result out of range')")
+    return r
+
+@extend
+class float:
+    def __pow__(self, other: float) -> float:
+        return _checked_pow(self, other)
+
+    def __pow__(self, other: int) -> float:
+        return _checked_pow(self, float(other))
+
+    def __int__(self) -> int:
+        if self != self:
+            raise ValueError("cannot convert float NaN to integer")
+        if self - self != 0.0:
+            raise OverflowError("cannot convert float infinity to integer")
+        if self >= 9.223372036854775808e18 or self < -9.223372036854775808e18:
+            raise OverflowError("float is out of the range of a 64-bit int")
+        return _fptosi_float(self)

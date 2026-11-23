@@ -134,7 +134,7 @@ def fmod(x: float, y: float) -> float:
         %z = frem double %x, %y
         ret double %z
 
-    return f(x, y)
+    return _check2(x, y, f(x, y))
 
 def exp(x: float) -> float:
     @pure
