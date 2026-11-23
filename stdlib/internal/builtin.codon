@@ -460,7 +460,8 @@ class int:
 
         end = cobj()
         result = _C.seq_int_from_str(s, __ptr__(end), i32(base))
-        n = len(s)
+        # NES: s.len counts bytes, as end does; len(s) counts code points where str is Unicode-aware.
+        n = s.len
 
         if n == 0 or end != s.ptr + n:
             parse_error(s0, base0)
@@ -475,7 +476,8 @@ class float:
     def _from_str(s: str) -> float:
         s0 = s
         s = s.rstrip()
-        n = len(s)
+        # NES: s.len counts bytes, as end does; len(s) counts code points where str is Unicode-aware.
+        n = s.len
         end = cobj()
         result = _C.seq_float_from_str(s, __ptr__(end))
 
