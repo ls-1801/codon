@@ -201,6 +201,10 @@ Stmt *TypecheckVisitor::transformAssignment(AssignStmt *stmt, bool mustExist) {
   }
 
   if (auto dot = cast<DotExpr>(stmt->getLhs())) {
+    // NES: `X.__doc__ = "..."` (also `X.field.__doc__`) only sets documentation, which compiled code does not keep: a
+    // no-op, so that libraries such as CPython's urllib.parse compile.
+    if (dot->getMember() == "__doc__")
+      return transform(N<SuiteStmt>());
     // Case: a.x = b
     dot->expr = transform(dot->getExpr(), true);
     return transform(N<AssignMemberStmt>(
