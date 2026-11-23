@@ -300,6 +300,13 @@ def sum(x, start=0):
 
         return s
 
+def __nes_unpack__(x):
+    # NES: unpacking (`a, b = x`) indexes x; an iterable without __getitem__ (a generator, map(...)) becomes a list.
+    if hasattr(x, "__getitem__"):
+        return x
+    else:
+        return list(x)
+
 def repr(x):
     if not hasattr(x, "__repr__") and hasattr(x, "__repr_default__"):
         return x.__repr_default__()

@@ -119,10 +119,15 @@ Stmt *TypecheckVisitor::unpackAssignment(Expr *lhs, Expr *rhs) {
   setSrcInfo(rhs->getSrcInfo());
   auto *block = N<SuiteStmt>();
   if (!cast<IdExpr>(rhs)) {
-    // Store any non-trivial right-side expression into a variable
+    // Store any non-trivial right-side expression into a variable. NES: other than a tuple or list display, through
+    // __nes_unpack__, which makes a list of an iterable without __getitem__ (a generator, map(...)), as Python unpacks
+    // any iterable. A display stays as it is: its None elements must keep their flexible type (`a, b = None, None`).
     auto var = getTemporaryVar("assign");
     auto newRhs = N<IdExpr>(var);
-    block->addStmt(N<AssignStmt>(newRhs, ast::clone(rhs)));
+    Expr *value = ast::clone(rhs);
+    if (!cast<TupleExpr>(rhs) && !cast<ListExpr>(rhs))
+      value = N<CallExpr>(N<IdExpr>("__nes_unpack__"), value);
+    block->addStmt(N<AssignStmt>(newRhs, value));
     rhs = newRhs;
   }
 
