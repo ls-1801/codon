@@ -1,5 +1,6 @@
 // Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -37,6 +38,7 @@ ScopingVisitor::apply(Cache *cache, Stmt *s,
   v.ctx = c;
 
   ConditionalBlock cb(c.get(), s, 0);
+  v.nesConditionalDefs(s);
   if (!v.transform(s))
     return llvm::make_error<ParserErrorInfo>(v.errors);
   if (v.hasErrors())
@@ -448,8 +450,119 @@ void ScopingVisitor::visit(YieldExpr *expr) {
     ctx->functionScope->setAttribute(Attr::IsGenerator);
 }
 
+/// NES: Python code defines a function of the same name on different paths:
+///   if isinstance(qs, str):
+///       def _unquote(s): ...
+///   else:
+///       def _unquote(s): ...
+/// Scoping must then treat the name as a variable that each path updates, which Codon does not allow for a def
+/// ("cannot bind ... to global or nonlocal name"). Each such def becomes a def of a new name and an assignment:
+///   def _nes_def__unquote_1(s): ...
+///   _unquote = _nes_def__unquote_1
+/// The rule applies to a name with two or more defs in one scope (a function body or the module), at least one of them
+/// inside a compound statement (if, loop, try, with); `@overload` defs stay as they are. A reference of the def to its
+/// own name (recursion) uses the new name. The type checker drops a branch whose condition is static (`isinstance`), so
+/// there the variable has one type; two live paths need functions of the same type.
+namespace {
+struct NesRenameId : public ReplacingCallbackASTVisitor {
+  Cache *cache = nullptr;
+  std::string from, to;
+  Expr *transform(Expr *e) override {
+    if (!e)
+      return e;
+    if (auto id = cast<IdExpr>(e)) {
+      if (id->getValue() != from)
+        return e;
+      auto n = cache->N<IdExpr>(to);
+      n->setSrcInfo(id->getSrcInfo());
+      return n;
+    }
+    e->accept(*this);
+    return e;
+  }
+  Stmt *transform(Stmt *s) override {
+    if (s)
+      s->accept(*this);
+    return s;
+  }
+};
+
+/// Calls fn on each slot of the scope that holds a statement, also inside compound statements, not inside defs,
+/// classes or lambdas. `nested` is false for the statements of the scope's own suite.
+void nesForEachScopeStmt(Stmt *s, bool nested, const std::function<void(Stmt *&, bool)> &fn) {
+  auto suite = cast<SuiteStmt>(s);
+  if (!suite)
+    return;
+  for (auto &x : *suite) {
+    if (!x)
+      continue;
+    if (cast<SuiteStmt>(x)) {
+      nesForEachScopeStmt(x, nested, fn);
+      continue;
+    }
+    fn(x, nested);
+    if (auto i = cast<IfStmt>(x)) {
+      nesForEachScopeStmt(i->getIf(), true, fn);
+      nesForEachScopeStmt(i->getElse(), true, fn);
+    } else if (auto w = cast<WhileStmt>(x)) {
+      nesForEachScopeStmt(w->getSuite(), true, fn);
+      nesForEachScopeStmt(w->getElse(), true, fn);
+    } else if (auto f = cast<ForStmt>(x)) {
+      nesForEachScopeStmt(f->getSuite(), true, fn);
+      nesForEachScopeStmt(f->getElse(), true, fn);
+    } else if (auto t = cast<TryStmt>(x)) {
+      nesForEachScopeStmt(t->getSuite(), true, fn);
+      for (auto *c : *t)
+        nesForEachScopeStmt(c->getSuite(), true, fn);
+      nesForEachScopeStmt(t->getElse(), true, fn);
+      nesForEachScopeStmt(t->getFinally(), true, fn);
+    } else if (auto w = cast<WithStmt>(x)) {
+      nesForEachScopeStmt(w->getSuite(), true, fn);
+    }
+  }
+}
+} // namespace
+
+void ScopingVisitor::nesConditionalDefs(Stmt *body) {
+  std::unordered_map<std::string, std::pair<int, bool>> defs; // name -> {count, one is nested}
+  auto isOverload = [](FunctionStmt *f) {
+    for (auto *d : f->getDecorators())
+      if (isId(d, "overload"))
+        return true;
+    return false;
+  };
+  nesForEachScopeStmt(body, false, [&](Stmt *&x, bool nested) {
+    if (auto f = cast<FunctionStmt>(x); f && !isOverload(f)) {
+      auto &d = defs[f->getName()];
+      d.first++;
+      d.second = d.second || nested;
+    }
+  });
+  std::unordered_map<std::string, int> counter;
+  nesForEachScopeStmt(body, false, [&](Stmt *&x, bool) {
+    auto f = cast<FunctionStmt>(x);
+    if (!f || isOverload(f))
+      return;
+    auto name = f->getName();
+    auto d = defs[name];
+    if (d.first < 2 || !d.second)
+      return;
+    auto newName = fmt::format("_nes_def_{}_{}", name, ++counter[name]);
+    NesRenameId r;
+    r.cache = ctx->cache;
+    r.from = name;
+    r.to = newName;
+    r.transform(f->getSuite());
+    f->setName(newName);
+    auto assign = N<AssignStmt>(N<IdExpr>(name), N<IdExpr>(newName));
+    assign->setSrcInfo(f->getSrcInfo());
+    x = N<SuiteStmt>(f, assign);
+  });
+}
+
 void ScopingVisitor::visit(FunctionStmt *stmt) {
   TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
+  nesConditionalDefs(stmt->getSuite());
   // Validate
   std::vector<Expr *> newDecorators;
   for (auto &d : stmt->getDecorators()) {

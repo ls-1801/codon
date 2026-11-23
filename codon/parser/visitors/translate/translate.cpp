@@ -490,6 +490,13 @@ void TranslateVisitor::visit(AssignStmt *stmt) {
   ir::Var *v = nullptr;
 
   if (stmt->isUpdate()) {
+    // NES: a function assigned to a variable that is bound on several paths (`if c: g = f`) is an alias, as a plain
+    // `g = f`: calls through `g` resolve to the function statically, and the function has no IR value to store.
+    if (stmt->getRhs() && stmt->getRhs()->getType() && stmt->getRhs()->getType()->getFunc()) {
+      if (!cast<IdExpr>(stmt->getRhs()))
+        result = transform(stmt->getRhs());
+      return;
+    }
     auto val = ctx->find(lei->getValue());
     seqassert(val && val->getVar(), "{} is not a variable", lei->getValue());
     v = val->getVar();
@@ -505,7 +512,8 @@ void TranslateVisitor::visit(AssignStmt *stmt) {
   if (!stmt->getLhs()->getType()->isInstantiated() ||
       (stmt->getLhs()->getType()->is(TYPE_TYPE)) ||
       stmt->getLhs()->getType()->getFunc()) {
-    if (!cast<IdExpr>(stmt->getRhs())) {
+    // NES: the declaration of a variable bound on several paths has no right side (`g` before `if c: g = f`).
+    if (stmt->getRhs() && !cast<IdExpr>(stmt->getRhs())) {
       // Side effect
       result = transform(stmt->getRhs());
     }

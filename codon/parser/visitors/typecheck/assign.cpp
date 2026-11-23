@@ -353,6 +353,19 @@ Stmt *TypecheckVisitor::transformUpdate(AssignStmt *stmt) {
     return inPlaceStmt;
   }
 
+  // NES: a function defined on more than one path that runs (`if c: def f(): ... else: def f(): ...` with a
+  // condition known only at run time; scoping made each def `_nes_def_f_N` plus `f = _nes_def_f_N`). Each def is its
+  // own type, so the variable cannot hold both.
+  if (auto lf = stmt->getLhs()->getType()->getFunc()) {
+    auto rid = cast<IdExpr>(stmt->getRhs());
+    if (rid && startswith(rid->getValue(), "_nes_def_") &&
+        getUnmangledName(lf->ast->getName()) != rid->getValue())
+      E(Error::CUSTOM, stmt,
+        "function '{}' is defined differently on two paths that can run; Codon needs one definition (a static "
+        "condition, such as isinstance(x, str), selects one at compile time)",
+        rid->getValue().substr(9, rid->getValue().rfind('_') - 9));
+  }
+
   stmt->rhs = transform(stmt->getRhs());
   stmt->type = transformType(stmt->getTypeExpr());
   if (stmt->getTypeExpr()) {

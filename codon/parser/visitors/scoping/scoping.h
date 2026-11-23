@@ -183,6 +183,8 @@ public:
   void visit(TryStmt *) override;
   void visit(GlobalStmt *) override;
   void visit(FunctionStmt *) override;
+  /// NES: a def of a name defined on more than one path becomes a def of a new name and an assignment.
+  void nesConditionalDefs(Stmt *);
   void visit(ClassStmt *) override;
   void visit(WithStmt *) override;
 
