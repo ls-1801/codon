@@ -236,6 +236,20 @@ void TypecheckVisitor::visit(DotExpr *expr) {
       Expr *e = N<IdExpr>(bestMethod->getFuncName());
       e->setType(instantiateType(bestMethod, typ));
 
+      // NES: a method called on an object whose type still has pass-through unbounds: in the __init__ of a class
+      // with inferred fields, `self.x = self.parse(s)` before the field types are known. Like __init__, the method may
+      // be realized with them open; it used to wait, and the fields defaulted to NoneType.
+      auto inDeduceInit = ctx->inFunction() && ctx->getBase()->func &&
+                          ctx->getBase()->func->hasAttribute(Attr::AllowPassThrough) &&
+                          getUnmangledName(ctx->getBase()->func->getName()) == "__init__";
+      if (inDeduceInit && !isTypeExpr(expr->getExpr()) &&
+          !bestMethod->ast->hasAttribute(Attr::AllowPassThrough))
+        for (auto &u : typ->getUnbounds(true))
+          if (u->getLink() && u->getLink()->kind != LinkType::Generic && u->getLink()->passThrough) {
+            bestMethod->ast->setAttribute(Attr::AllowPassThrough);
+            break;
+          }
+
       if (bestMethod->ast->hasAttribute(Attr::ClassMethod)) {
         // NES: classmethod: pass the class as the first argument.
         Expr *clsExpr = isTypeExpr(expr->getExpr())
