@@ -37,6 +37,16 @@ struct PrimaryTail {
   std::vector<CallArg> args;
 };
 
+/// The name of the hidden *args parameter that a bare `*` in a parameter list becomes: the parameters after it are
+/// keyword-only, as after any *args.
+inline constexpr std::string_view KWONLY_MARKER = "__nes_kwonly";
+
+/// A parameter list without the positional-only marker `/`; the parameters before it can also be passed by keyword.
+inline std::vector<Param> withoutParamMarkers(std::vector<Param> params) {
+  std::erase_if(params, [](const Param &p) { return p.name == "/"; });
+  return params;
+}
+
 inline Expr *wrapTuple(ParseContext &CTX, std::vector<Expr *> items, bool trailingComma, const SrcInfo &LOC) {
   if (items.size() == 1 && !trailingComma)
     return items[0];
@@ -297,10 +307,14 @@ function_def[Stmt *]:
         asts(Function, LOC, n, r ? *r : nullptr, p, nullptr)
     }
 params[std::vector<Param>]:
-    | '(' ps=[x=','.param+ [','] {<std::vector<Param>> x}] ')' { ps ? *ps : std::vector<Param>{} }
+    | '(' ps=[x=','.param+ [','] {<std::vector<Param>> x}] ')' { withoutParamMarkers(ps ? *ps : std::vector<Param>{}) }
 param[Param] (memo):
     | n=param_name ':' t=expression d=['=' x=expression {<Expr *> x}] { Param(LOC, n, t, d ? *d : nullptr) }
     | n=param_name d=['=' x=expression {<Expr *> x}] { Param(LOC, n, nullptr, d ? *d : nullptr) }
+    | m=param_marker { Param(LOC, m, nullptr, nullptr) }
+param_marker[std::string]:
+    | '*' &(',' | ')' | ':') { "*" + std::string(KWONLY_MARKER) }
+    | '/' &(',' | ')' | ':') { "/" }
 param_name[std::string] (memo):
     | s=['**' {<std::string> "**"} | '*' {<std::string> "*"}] n=name { (s ? *s : std::string()) + n }
 generics[std::vector<Param>] (memo):
@@ -388,9 +402,10 @@ lambdef[Expr *]:
     | 'lambda' SP ps=lparams ':' e=expression { aste(Lambda, LOC, ps, e) }
     | 'lambda' ':' e=expression { aste(Lambda, LOC, std::vector<Param>{}, e) }
 lparams[std::vector<Param>]:
-    | ps=[x=','.lparam+ [','] {<std::vector<Param>> x}] { ps ? *ps : std::vector<Param>{} }
+    | ps=[x=','.lparam+ [','] {<std::vector<Param>> x}] { withoutParamMarkers(ps ? *ps : std::vector<Param>{}) }
 lparam[Param]:
     | n=param_name d=['=' x=expression {<Expr *> x}] { Param(LOC, n, nullptr, d ? *d : nullptr) }
+    | m=param_marker { Param(LOC, m, nullptr, nullptr) }
 pipe_op[std::string]: '|>' { "|>" } | '||>' { "||>" }
 pipe[Expr *]:
     | a=disjunction rest=(o=pipe_op b=disjunction {<OpExpr> OpExpr(o, b)})+ {{

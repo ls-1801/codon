@@ -31,6 +31,16 @@ struct PrimaryTail {
   std::vector<CallArg> args;
 };
 
+/// The name of the hidden *args parameter that a bare `*` in a parameter list becomes: the parameters after it are
+/// keyword-only, as after any *args.
+inline constexpr std::string_view KWONLY_MARKER = "__nes_kwonly";
+
+/// A parameter list without the positional-only marker `/`; the parameters before it can also be passed by keyword.
+inline std::vector<Param> withoutParamMarkers(std::vector<Param> params) {
+  std::erase_if(params, [](const Param &p) { return p.name == "/"; });
+  return params;
+}
+
 inline Expr *wrapTuple(ParseContext &CTX, std::vector<Expr *> items, bool trailingComma, const SrcInfo &LOC) {
   if (items.size() == 1 && !trailingComma)
     return items[0];
@@ -111,6 +121,7 @@ struct Parser : ParserBase {
   std::optional<std::vector<Param>> r_params();
   std::optional<Param> r_param();
   std::vector<MemoEntry<Param>> memo_param;
+  std::optional<std::string> r_param_marker();
   std::optional<std::string> r_param_name();
   std::vector<MemoEntry<std::string>> memo_param_name;
   std::optional<std::vector<Param>> r_generics();
@@ -2846,7 +2857,7 @@ std::optional<std::vector<Param>> Parser::r_params() {
       auto _v332 = tokOpt(expectOp(")"));
       if (!_v332) break;
       [[maybe_unused]] auto LOC = loc(_start);
-      return std::optional<std::vector<Param>>(ps ? *ps : std::vector<Param>{});
+      return std::optional<std::vector<Param>>(withoutParamMarkers(ps ? *ps : std::vector<Param>{}));
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -2932,10 +2943,94 @@ std::optional<Param> Parser::r_param() {
       pos = _start;
       if (_cut) return std::nullopt;
     }
+    {
+      size_t _start = pos;
+      bool _cut = false;
+      do {
+        auto _v345 = r_param_marker();
+        if (!_v345) break;
+        auto &m = *_v345;
+        [[maybe_unused]] auto LOC = loc(_start);
+        return std::optional<Param>(Param(LOC, m, nullptr, nullptr));
+      } while (false);
+      pos = _start;
+      if (_cut) return std::nullopt;
+    }
     return std::nullopt;
   }();
   memo_param[_memoStart] = MemoEntry<Param>{uint32_t(pos + 1), _result};
   return _result;
+}
+std::optional<std::string> Parser::r_param_marker() {
+  {
+    size_t _start = pos;
+    bool _cut = false;
+    do {
+      auto _v346 = tokOpt(expectOp("*"));
+      if (!_v346) break;
+      auto _g347 = [&]() -> bool {
+        do {
+          auto _v348 = tokOpt(expectOp(","));
+          if (!_v348) break;
+          return true;
+        } while (false);
+        do {
+          auto _v349 = tokOpt(expectOp(")"));
+          if (!_v349) break;
+          return true;
+        } while (false);
+        do {
+          auto _v350 = tokOpt(expectOp(":"));
+          if (!_v350) break;
+          return true;
+        } while (false);
+        return false;
+      };
+      size_t _p351 = pos;
+      bool _p351_ok = bool(_g347());
+      pos = _p351;
+      if (!_p351_ok) break;
+      [[maybe_unused]] auto LOC = loc(_start);
+      return std::optional<std::string>("*" + std::string(KWONLY_MARKER));
+    } while (false);
+    pos = _start;
+    if (_cut) return std::nullopt;
+  }
+  {
+    size_t _start = pos;
+    bool _cut = false;
+    do {
+      auto _v352 = tokOpt(expectOp("/"));
+      if (!_v352) break;
+      auto _g353 = [&]() -> bool {
+        do {
+          auto _v354 = tokOpt(expectOp(","));
+          if (!_v354) break;
+          return true;
+        } while (false);
+        do {
+          auto _v355 = tokOpt(expectOp(")"));
+          if (!_v355) break;
+          return true;
+        } while (false);
+        do {
+          auto _v356 = tokOpt(expectOp(":"));
+          if (!_v356) break;
+          return true;
+        } while (false);
+        return false;
+      };
+      size_t _p357 = pos;
+      bool _p357_ok = bool(_g353());
+      pos = _p357;
+      if (!_p357_ok) break;
+      [[maybe_unused]] auto LOC = loc(_start);
+      return std::optional<std::string>("/");
+    } while (false);
+    pos = _start;
+    if (_cut) return std::nullopt;
+  }
+  return std::nullopt;
 }
 std::optional<std::string> Parser::r_param_name() {
   if (memo_param_name.empty()) memo_param_name.resize(toks.size() + 1);
@@ -2949,13 +3044,13 @@ std::optional<std::string> Parser::r_param_name() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _g346 = [&]() -> std::optional<std::string> {
+        auto _g359 = [&]() -> std::optional<std::string> {
           {
             size_t _start = pos;
             bool _cut = false;
             do {
-              auto _v347 = tokOpt(expectOp("**"));
-              if (!_v347) break;
+              auto _v360 = tokOpt(expectOp("**"));
+              if (!_v360) break;
               [[maybe_unused]] auto LOC = loc(_start);
               return std::optional<std::string>("**");
             } while (false);
@@ -2966,8 +3061,8 @@ std::optional<std::string> Parser::r_param_name() {
             size_t _start = pos;
             bool _cut = false;
             do {
-              auto _v348 = tokOpt(expectOp("*"));
-              if (!_v348) break;
+              auto _v361 = tokOpt(expectOp("*"));
+              if (!_v361) break;
               [[maybe_unused]] auto LOC = loc(_start);
               return std::optional<std::string>("*");
             } while (false);
@@ -2976,11 +3071,11 @@ std::optional<std::string> Parser::r_param_name() {
           }
           return std::nullopt;
         };
-        auto _v345 = _g346();
-        auto &s = _v345;
-        auto _v349 = r_name();
-        if (!_v349) break;
-        auto &n = *_v349;
+        auto _v358 = _g359();
+        auto &s = _v358;
+        auto _v362 = r_name();
+        if (!_v362) break;
+        auto &n = *_v362;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<std::string>((s ? *s : std::string()) + n);
       } while (false);
@@ -3004,24 +3099,24 @@ std::optional<std::vector<Param>> Parser::r_generics() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v350 = tokOpt(expectOp("["));
-        if (!_v350) break;
-        std::vector<Param> _v351;
+        auto _v363 = tokOpt(expectOp("["));
+        if (!_v363) break;
+        std::vector<Param> _v364;
         if (auto _e = r_param()) {
-          _v351.push_back(std::move(*_e));
+          _v364.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_param();
             if (!_f) { pos = _q; break; }
-            _v351.push_back(std::move(*_f));
+            _v364.push_back(std::move(*_f));
           }
         }
-        if (_v351.empty()) break;
-        auto &ps = _v351;
-        auto _v352 = tokOpt(expectOp(","));
-        auto _v353 = tokOpt(expectOp("]"));
-        if (!_v353) break;
+        if (_v364.empty()) break;
+        auto &ps = _v364;
+        auto _v365 = tokOpt(expectOp(","));
+        auto _v366 = tokOpt(expectOp("]"));
+        if (!_v366) break;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<std::vector<Param>>([&]() -> std::vector<Param> { 
         std::vector<Param> params;
@@ -3046,15 +3141,15 @@ std::optional<std::vector<Expr *>> Parser::r_decorators() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      std::vector<Expr *> _v354;
+      std::vector<Expr *> _v367;
       while (true) {
         size_t _q = pos;
         auto _e = r_decorator();
         if (!_e) { pos = _q; break; }
-        _v354.push_back(std::move(*_e));
+        _v367.push_back(std::move(*_e));
       }
-      if (_v354.empty()) break;
-      auto &ds = _v354;
+      if (_v367.empty()) break;
+      auto &ds = _v367;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<Expr *>>(ds);
     } while (false);
@@ -3068,27 +3163,27 @@ std::optional<Expr *> Parser::r_decorator() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v355 = tokOpt(expectOp("@"));
-      if (!_v355) break;
-      auto _g356 = [&]() -> bool {
+      auto _v368 = tokOpt(expectOp("@"));
+      if (!_v368) break;
+      auto _g369 = [&]() -> bool {
         do {
-          auto _v357 = r_extern_kind();
-          if (!_v357) break;
-          auto _v358 = tokOpt(expectKind(Kind::Newline));
-          if (!_v358) break;
+          auto _v370 = r_extern_kind();
+          if (!_v370) break;
+          auto _v371 = tokOpt(expectKind(Kind::Newline));
+          if (!_v371) break;
           return true;
         } while (false);
         return false;
       };
-      size_t _p359 = pos;
-      bool _p359_ok = bool(_g356());
-      pos = _p359;
-      if (_p359_ok) break;
-      auto _v360 = r_named_expression();
-      if (!_v360) break;
-      auto &e = *_v360;
-      auto _v361 = tokOpt(expectKind(Kind::Newline));
-      if (!_v361) break;
+      size_t _p372 = pos;
+      bool _p372_ok = bool(_g369());
+      pos = _p372;
+      if (_p372_ok) break;
+      auto _v373 = r_named_expression();
+      if (!_v373) break;
+      auto &e = *_v373;
+      auto _v374 = tokOpt(expectKind(Kind::Newline));
+      if (!_v374) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(e);
     } while (false);
@@ -3102,12 +3197,12 @@ std::optional<Stmt *> Parser::r_class_() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v362 = r_decorators();
-      if (!_v362) break;
-      auto &d = *_v362;
-      auto _v363 = r_class_def();
-      if (!_v363) break;
-      auto &c = *_v363;
+      auto _v375 = r_decorators();
+      if (!_v375) break;
+      auto &d = *_v375;
+      auto _v376 = r_class_def();
+      if (!_v376) break;
+      auto &c = *_v376;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>([&]() -> Stmt * { 
         cast<ClassStmt>(c)->setDecorators(d);
@@ -3121,9 +3216,9 @@ std::optional<Stmt *> Parser::r_class_() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v364 = r_class_def();
-      if (!_v364) break;
-      return std::optional<Stmt *>(*_v364);
+      auto _v377 = r_class_def();
+      if (!_v377) break;
+      return std::optional<Stmt *>(*_v377);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -3135,27 +3230,27 @@ std::optional<std::vector<Expr *>> Parser::r_base_class_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v365 = tokOpt(expectOp("("));
-      if (!_v365) break;
-      auto _g367 = [&]() -> std::optional<std::vector<Expr *>> {
+      auto _v378 = tokOpt(expectOp("("));
+      if (!_v378) break;
+      auto _g380 = [&]() -> std::optional<std::vector<Expr *>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            std::vector<Expr *> _v368;
+            std::vector<Expr *> _v381;
             if (auto _e = r_expression()) {
-              _v368.push_back(std::move(*_e));
+              _v381.push_back(std::move(*_e));
               while (true) {
                 size_t _q = pos;
                 if (!expectOp(",")) { pos = _q; break; }
                 auto _f = r_expression();
                 if (!_f) { pos = _q; break; }
-                _v368.push_back(std::move(*_f));
+                _v381.push_back(std::move(*_f));
               }
             }
-            if (_v368.empty()) break;
-            auto &x = _v368;
-            auto _v369 = tokOpt(expectOp(","));
+            if (_v381.empty()) break;
+            auto &x = _v381;
+            auto _v382 = tokOpt(expectOp(","));
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<Expr *>>(x);
           } while (false);
@@ -3164,10 +3259,10 @@ std::optional<std::vector<Expr *>> Parser::r_base_class_args() {
         }
         return std::nullopt;
       };
-      auto _v366 = _g367();
-      auto &xs = _v366;
-      auto _v370 = tokOpt(expectOp(")"));
-      if (!_v370) break;
+      auto _v379 = _g380();
+      auto &xs = _v379;
+      auto _v383 = tokOpt(expectOp(")"));
+      if (!_v383) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<Expr *>>(xs ? *xs : std::vector<Expr *>{});
     } while (false);
@@ -3181,12 +3276,12 @@ std::optional<ClassArgs> Parser::r_class_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v371 = r_generics();
-      if (!_v371) break;
-      auto &g = *_v371;
-      auto _v372 = r_base_class_args();
-      if (!_v372) break;
-      auto &b = *_v372;
+      auto _v384 = r_generics();
+      if (!_v384) break;
+      auto &g = *_v384;
+      auto _v385 = r_base_class_args();
+      if (!_v385) break;
+      auto &b = *_v385;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<ClassArgs>(ClassArgs(g, b));
     } while (false);
@@ -3197,9 +3292,9 @@ std::optional<ClassArgs> Parser::r_class_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v373 = r_generics();
-      if (!_v373) break;
-      auto &g = *_v373;
+      auto _v386 = r_generics();
+      if (!_v386) break;
+      auto &g = *_v386;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<ClassArgs>(ClassArgs(g, std::vector<Expr *>{}));
     } while (false);
@@ -3210,9 +3305,9 @@ std::optional<ClassArgs> Parser::r_class_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v374 = r_base_class_args();
-      if (!_v374) break;
-      auto &b = *_v374;
+      auto _v387 = r_base_class_args();
+      if (!_v387) break;
+      auto &b = *_v387;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<ClassArgs>(ClassArgs(std::vector<Param>{}, b));
     } while (false);
@@ -3226,19 +3321,19 @@ std::optional<Stmt *> Parser::r_class_def() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v375 = tokOpt(expectKeyword("class"));
-      if (!_v375) break;
+      auto _v388 = tokOpt(expectKeyword("class"));
+      if (!_v388) break;
       if (!sp()) break;
-      auto _v376 = r_name();
-      if (!_v376) break;
-      auto &n = *_v376;
-      auto _v377 = r_class_args();
-      auto &a = _v377;
-      auto _v378 = tokOpt(expectOp(":"));
-      if (!_v378) break;
-      auto _v379 = r_suite();
-      if (!_v379) break;
-      auto &s = *_v379;
+      auto _v389 = r_name();
+      if (!_v389) break;
+      auto &n = *_v389;
+      auto _v390 = r_class_args();
+      auto &a = _v390;
+      auto _v391 = tokOpt(expectOp(":"));
+      if (!_v391) break;
+      auto _v392 = r_suite();
+      if (!_v392) break;
+      auto &s = *_v392;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>([&]() -> Stmt * { 
         std::vector<Param> generics;
@@ -3273,29 +3368,29 @@ std::optional<Stmt *> Parser::r_match_stmt() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v380 = tokOpt(expectKeyword("match"));
-      if (!_v380) break;
+      auto _v393 = tokOpt(expectKeyword("match"));
+      if (!_v393) break;
       if (!sp()) break;
-      auto _v381 = r_expression();
-      if (!_v381) break;
-      auto &e = *_v381;
-      auto _v382 = tokOpt(expectOp(":"));
-      if (!_v382) break;
-      auto _v383 = tokOpt(expectKind(Kind::Newline));
-      if (!_v383) break;
-      auto _v384 = tokOpt(expectKind(Kind::Indent));
-      if (!_v384) break;
-      std::vector<MatchCase> _v385;
+      auto _v394 = r_expression();
+      if (!_v394) break;
+      auto &e = *_v394;
+      auto _v395 = tokOpt(expectOp(":"));
+      if (!_v395) break;
+      auto _v396 = tokOpt(expectKind(Kind::Newline));
+      if (!_v396) break;
+      auto _v397 = tokOpt(expectKind(Kind::Indent));
+      if (!_v397) break;
+      std::vector<MatchCase> _v398;
       while (true) {
         size_t _q = pos;
         auto _e = r_case_();
         if (!_e) { pos = _q; break; }
-        _v385.push_back(std::move(*_e));
+        _v398.push_back(std::move(*_e));
       }
-      if (_v385.empty()) break;
-      auto &cs = _v385;
-      auto _v386 = tokOpt(expectKind(Kind::Dedent));
-      if (!_v386) break;
+      if (_v398.empty()) break;
+      auto &cs = _v398;
+      auto _v399 = tokOpt(expectKind(Kind::Dedent));
+      if (!_v399) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>(asts(Match, LOC, e, cs));
     } while (false);
@@ -3309,24 +3404,24 @@ std::optional<MatchCase> Parser::r_case_() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v387 = tokOpt(expectKeyword("case"));
-      if (!_v387) break;
+      auto _v400 = tokOpt(expectKeyword("case"));
+      if (!_v400) break;
       if (!sp()) break;
-      auto _v388 = r_expression();
-      if (!_v388) break;
-      auto &e = *_v388;
+      auto _v401 = r_expression();
+      if (!_v401) break;
+      auto &e = *_v401;
       if (!sp()) break;
-      auto _v389 = tokOpt(expectKeyword("if"));
-      if (!_v389) break;
+      auto _v402 = tokOpt(expectKeyword("if"));
+      if (!_v402) break;
       if (!sp()) break;
-      auto _v390 = r_pipe();
-      if (!_v390) break;
-      auto &g = *_v390;
-      auto _v391 = tokOpt(expectOp(":"));
-      if (!_v391) break;
-      auto _v392 = r_suite();
-      if (!_v392) break;
-      auto &s = *_v392;
+      auto _v403 = r_pipe();
+      if (!_v403) break;
+      auto &g = *_v403;
+      auto _v404 = tokOpt(expectOp(":"));
+      if (!_v404) break;
+      auto _v405 = r_suite();
+      if (!_v405) break;
+      auto &s = *_v405;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<MatchCase>(MatchCase{e, g, s});
     } while (false);
@@ -3337,17 +3432,17 @@ std::optional<MatchCase> Parser::r_case_() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v393 = tokOpt(expectKeyword("case"));
-      if (!_v393) break;
+      auto _v406 = tokOpt(expectKeyword("case"));
+      if (!_v406) break;
       if (!sp()) break;
-      auto _v394 = r_expression();
-      if (!_v394) break;
-      auto &e = *_v394;
-      auto _v395 = tokOpt(expectOp(":"));
-      if (!_v395) break;
-      auto _v396 = r_suite();
-      if (!_v396) break;
-      auto &s = *_v396;
+      auto _v407 = r_expression();
+      if (!_v407) break;
+      auto &e = *_v407;
+      auto _v408 = tokOpt(expectOp(":"));
+      if (!_v408) break;
+      auto _v409 = r_suite();
+      if (!_v409) break;
+      auto &s = *_v409;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<MatchCase>(MatchCase{e, nullptr, s});
     } while (false);
@@ -3361,19 +3456,19 @@ std::optional<Stmt *> Parser::r_custom_stmt() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v397 = r_name();
-      if (!_v397) break;
-      auto &n = *_v397;
+      auto _v410 = r_name();
+      if (!_v410) break;
+      auto &n = *_v410;
       if (!(CTX.hasCustomStmtKeyword(n, true))) break;
       if (!sp()) break;
-      auto _v398 = r_expression();
-      if (!_v398) break;
-      auto &e = *_v398;
-      auto _v399 = tokOpt(expectOp(":"));
-      if (!_v399) break;
-      auto _v400 = r_suite();
-      if (!_v400) break;
-      auto &s = *_v400;
+      auto _v411 = r_expression();
+      if (!_v411) break;
+      auto &e = *_v411;
+      auto _v412 = tokOpt(expectOp(":"));
+      if (!_v412) break;
+      auto _v413 = r_suite();
+      if (!_v413) break;
+      auto &s = *_v413;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>(asts(Custom, LOC, n, e, s));
     } while (false);
@@ -3384,15 +3479,15 @@ std::optional<Stmt *> Parser::r_custom_stmt() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v401 = r_name();
-      if (!_v401) break;
-      auto &n = *_v401;
+      auto _v414 = r_name();
+      if (!_v414) break;
+      auto &n = *_v414;
       if (!(CTX.hasCustomStmtKeyword(n, false))) break;
-      auto _v402 = tokOpt(expectOp(":"));
-      if (!_v402) break;
-      auto _v403 = r_suite();
-      if (!_v403) break;
-      auto &s = *_v403;
+      auto _v415 = tokOpt(expectOp(":"));
+      if (!_v415) break;
+      auto _v416 = r_suite();
+      if (!_v416) break;
+      auto &s = *_v416;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>(asts(Custom, LOC, n, nullptr, s));
     } while (false);
@@ -3406,14 +3501,14 @@ std::optional<Stmt *> Parser::r_custom_small_stmt() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v404 = r_name();
-      if (!_v404) break;
-      auto &n = *_v404;
+      auto _v417 = r_name();
+      if (!_v417) break;
+      auto &n = *_v417;
       if (!(CTX.hasCustomExprStmt(n))) break;
       if (!sp()) break;
-      auto _v405 = r_expressions();
-      if (!_v405) break;
-      auto &e = *_v405;
+      auto _v418 = r_expressions();
+      if (!_v418) break;
+      auto &e = *_v418;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>(asts(Custom, LOC, n, e, nullptr));
     } while (false);
@@ -3427,9 +3522,9 @@ std::optional<Stmt *> Parser::r_directive() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v406 = tokOpt(expectKind(Kind::Directive));
-      if (!_v406) break;
-      auto &d = *_v406;
+      auto _v419 = tokOpt(expectKind(Kind::Directive));
+      if (!_v419) break;
+      auto &d = *_v419;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Stmt *>([&]() -> Stmt * { 
         // ## codon: name = value
@@ -3456,21 +3551,21 @@ std::optional<Expr *> Parser::r_expressions() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      std::vector<Expr *> _v407;
+      std::vector<Expr *> _v420;
       if (auto _e = r_expression()) {
-        _v407.push_back(std::move(*_e));
+        _v420.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_expression();
           if (!_f) { pos = _q; break; }
-          _v407.push_back(std::move(*_f));
+          _v420.push_back(std::move(*_f));
         }
       }
-      if (_v407.empty()) break;
-      auto &xs = _v407;
-      auto _v408 = tokOpt(expectOp(","));
-      auto &c = _v408;
+      if (_v420.empty()) break;
+      auto &xs = _v420;
+      auto _v421 = tokOpt(expectOp(","));
+      auto &c = _v421;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
     } while (false);
@@ -3491,9 +3586,9 @@ std::optional<Expr *> Parser::r_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v409 = r_lambdef();
-        if (!_v409) break;
-        return std::optional<Expr *>(*_v409);
+        auto _v422 = r_lambdef();
+        if (!_v422) break;
+        return std::optional<Expr *>(*_v422);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -3502,19 +3597,19 @@ std::optional<Expr *> Parser::r_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v410 = r_disjunction();
-        if (!_v410) break;
-        auto &a = *_v410;
-        auto _v411 = tokOpt(expectKeyword("if"));
-        if (!_v411) break;
-        auto _v412 = r_disjunction();
-        if (!_v412) break;
-        auto &c = *_v412;
-        auto _v413 = tokOpt(expectKeyword("else"));
-        if (!_v413) break;
-        auto _v414 = r_expression();
-        if (!_v414) break;
-        auto &b = *_v414;
+        auto _v423 = r_disjunction();
+        if (!_v423) break;
+        auto &a = *_v423;
+        auto _v424 = tokOpt(expectKeyword("if"));
+        if (!_v424) break;
+        auto _v425 = r_disjunction();
+        if (!_v425) break;
+        auto &c = *_v425;
+        auto _v426 = tokOpt(expectKeyword("else"));
+        if (!_v426) break;
+        auto _v427 = r_expression();
+        if (!_v427) break;
+        auto &b = *_v427;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(If, LOC, c, a, b));
       } while (false);
@@ -3525,9 +3620,9 @@ std::optional<Expr *> Parser::r_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v415 = r_pipe();
-        if (!_v415) break;
-        return std::optional<Expr *>(*_v415);
+        auto _v428 = r_pipe();
+        if (!_v428) break;
+        return std::optional<Expr *>(*_v428);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -3542,17 +3637,17 @@ std::optional<Expr *> Parser::r_lambdef() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v416 = tokOpt(expectKeyword("lambda"));
-      if (!_v416) break;
+      auto _v429 = tokOpt(expectKeyword("lambda"));
+      if (!_v429) break;
       if (!sp()) break;
-      auto _v417 = r_lparams();
-      if (!_v417) break;
-      auto &ps = *_v417;
-      auto _v418 = tokOpt(expectOp(":"));
-      if (!_v418) break;
-      auto _v419 = r_expression();
-      if (!_v419) break;
-      auto &e = *_v419;
+      auto _v430 = r_lparams();
+      if (!_v430) break;
+      auto &ps = *_v430;
+      auto _v431 = tokOpt(expectOp(":"));
+      if (!_v431) break;
+      auto _v432 = r_expression();
+      if (!_v432) break;
+      auto &e = *_v432;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Lambda, LOC, ps, e));
     } while (false);
@@ -3563,13 +3658,13 @@ std::optional<Expr *> Parser::r_lambdef() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v420 = tokOpt(expectKeyword("lambda"));
-      if (!_v420) break;
-      auto _v421 = tokOpt(expectOp(":"));
-      if (!_v421) break;
-      auto _v422 = r_expression();
-      if (!_v422) break;
-      auto &e = *_v422;
+      auto _v433 = tokOpt(expectKeyword("lambda"));
+      if (!_v433) break;
+      auto _v434 = tokOpt(expectOp(":"));
+      if (!_v434) break;
+      auto _v435 = r_expression();
+      if (!_v435) break;
+      auto &e = *_v435;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Lambda, LOC, std::vector<Param>{}, e));
     } while (false);
@@ -3583,25 +3678,25 @@ std::optional<std::vector<Param>> Parser::r_lparams() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _g424 = [&]() -> std::optional<std::vector<Param>> {
+      auto _g437 = [&]() -> std::optional<std::vector<Param>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            std::vector<Param> _v425;
+            std::vector<Param> _v438;
             if (auto _e = r_lparam()) {
-              _v425.push_back(std::move(*_e));
+              _v438.push_back(std::move(*_e));
               while (true) {
                 size_t _q = pos;
                 if (!expectOp(",")) { pos = _q; break; }
                 auto _f = r_lparam();
                 if (!_f) { pos = _q; break; }
-                _v425.push_back(std::move(*_f));
+                _v438.push_back(std::move(*_f));
               }
             }
-            if (_v425.empty()) break;
-            auto &x = _v425;
-            auto _v426 = tokOpt(expectOp(","));
+            if (_v438.empty()) break;
+            auto &x = _v438;
+            auto _v439 = tokOpt(expectOp(","));
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<Param>>(x);
           } while (false);
@@ -3610,10 +3705,10 @@ std::optional<std::vector<Param>> Parser::r_lparams() {
         }
         return std::nullopt;
       };
-      auto _v423 = _g424();
-      auto &ps = _v423;
+      auto _v436 = _g437();
+      auto &ps = _v436;
       [[maybe_unused]] auto LOC = loc(_start);
-      return std::optional<std::vector<Param>>(ps ? *ps : std::vector<Param>{});
+      return std::optional<std::vector<Param>>(withoutParamMarkers(ps ? *ps : std::vector<Param>{}));
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -3625,19 +3720,19 @@ std::optional<Param> Parser::r_lparam() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v427 = r_param_name();
-      if (!_v427) break;
-      auto &n = *_v427;
-      auto _g429 = [&]() -> std::optional<Expr *> {
+      auto _v440 = r_param_name();
+      if (!_v440) break;
+      auto &n = *_v440;
+      auto _g442 = [&]() -> std::optional<Expr *> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v430 = tokOpt(expectOp("="));
-            if (!_v430) break;
-            auto _v431 = r_expression();
-            if (!_v431) break;
-            auto &x = *_v431;
+            auto _v443 = tokOpt(expectOp("="));
+            if (!_v443) break;
+            auto _v444 = r_expression();
+            if (!_v444) break;
+            auto &x = *_v444;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<Expr *>(x);
           } while (false);
@@ -3646,10 +3741,23 @@ std::optional<Param> Parser::r_lparam() {
         }
         return std::nullopt;
       };
-      auto _v428 = _g429();
-      auto &d = _v428;
+      auto _v441 = _g442();
+      auto &d = _v441;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Param>(Param(LOC, n, nullptr, d ? *d : nullptr));
+    } while (false);
+    pos = _start;
+    if (_cut) return std::nullopt;
+  }
+  {
+    size_t _start = pos;
+    bool _cut = false;
+    do {
+      auto _v445 = r_param_marker();
+      if (!_v445) break;
+      auto &m = *_v445;
+      [[maybe_unused]] auto LOC = loc(_start);
+      return std::optional<Param>(Param(LOC, m, nullptr, nullptr));
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -3661,8 +3769,8 @@ std::optional<std::string> Parser::r_pipe_op() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v432 = tokOpt(expectOp("|>"));
-      if (!_v432) break;
+      auto _v446 = tokOpt(expectOp("|>"));
+      if (!_v446) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::string>("|>");
     } while (false);
@@ -3673,8 +3781,8 @@ std::optional<std::string> Parser::r_pipe_op() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v433 = tokOpt(expectOp("||>"));
-      if (!_v433) break;
+      auto _v447 = tokOpt(expectOp("||>"));
+      if (!_v447) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::string>("||>");
     } while (false);
@@ -3688,20 +3796,20 @@ std::optional<Expr *> Parser::r_pipe() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v434 = r_disjunction();
-      if (!_v434) break;
-      auto &a = *_v434;
-      auto _g436 = [&]() -> std::optional<OpExpr> {
+      auto _v448 = r_disjunction();
+      if (!_v448) break;
+      auto &a = *_v448;
+      auto _g450 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v437 = r_pipe_op();
-            if (!_v437) break;
-            auto &o = *_v437;
-            auto _v438 = r_disjunction();
-            if (!_v438) break;
-            auto &b = *_v438;
+            auto _v451 = r_pipe_op();
+            if (!_v451) break;
+            auto &o = *_v451;
+            auto _v452 = r_disjunction();
+            if (!_v452) break;
+            auto &b = *_v452;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(o, b));
           } while (false);
@@ -3710,15 +3818,15 @@ std::optional<Expr *> Parser::r_pipe() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v435;
+      std::vector<OpExpr> _v449;
       while (true) {
         size_t _q = pos;
-        auto _e = _g436();
+        auto _e = _g450();
         if (!_e) { pos = _q; break; }
-        _v435.push_back(std::move(*_e));
+        _v449.push_back(std::move(*_e));
       }
-      if (_v435.empty()) break;
-      auto &rest = _v435;
+      if (_v449.empty()) break;
+      auto &rest = _v449;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>([&]() -> Expr * { 
         std::vector<Pipe> v{Pipe{"", a}};
@@ -3733,9 +3841,9 @@ std::optional<Expr *> Parser::r_pipe() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v439 = r_disjunction();
-      if (!_v439) break;
-      return std::optional<Expr *>(*_v439);
+      auto _v453 = r_disjunction();
+      if (!_v453) break;
+      return std::optional<Expr *>(*_v453);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -3754,19 +3862,19 @@ std::optional<Expr *> Parser::r_disjunction() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v440 = r_conjunction();
-        if (!_v440) break;
-        auto &a = *_v440;
-        auto _g442 = [&]() -> std::optional<Expr *> {
+        auto _v454 = r_conjunction();
+        if (!_v454) break;
+        auto &a = *_v454;
+        auto _g456 = [&]() -> std::optional<Expr *> {
           {
             size_t _start = pos;
             bool _cut = false;
             do {
-              auto _v443 = tokOpt(expectKeyword("or"));
-              if (!_v443) break;
-              auto _v444 = r_conjunction();
-              if (!_v444) break;
-              auto &b = *_v444;
+              auto _v457 = tokOpt(expectKeyword("or"));
+              if (!_v457) break;
+              auto _v458 = r_conjunction();
+              if (!_v458) break;
+              auto &b = *_v458;
               [[maybe_unused]] auto LOC = loc(_start);
               return std::optional<Expr *>(b);
             } while (false);
@@ -3775,15 +3883,15 @@ std::optional<Expr *> Parser::r_disjunction() {
           }
           return std::nullopt;
         };
-        std::vector<Expr *> _v441;
+        std::vector<Expr *> _v455;
         while (true) {
           size_t _q = pos;
-          auto _e = _g442();
+          auto _e = _g456();
           if (!_e) { pos = _q; break; }
-          _v441.push_back(std::move(*_e));
+          _v455.push_back(std::move(*_e));
         }
-        if (_v441.empty()) break;
-        auto &rest = _v441;
+        if (_v455.empty()) break;
+        auto &rest = _v455;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>([&]() -> Expr * { 
         Expr *e = a;
@@ -3798,9 +3906,9 @@ std::optional<Expr *> Parser::r_disjunction() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v445 = r_conjunction();
-        if (!_v445) break;
-        return std::optional<Expr *>(*_v445);
+        auto _v459 = r_conjunction();
+        if (!_v459) break;
+        return std::optional<Expr *>(*_v459);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -3822,19 +3930,19 @@ std::optional<Expr *> Parser::r_conjunction() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v446 = r_inversion();
-        if (!_v446) break;
-        auto &a = *_v446;
-        auto _g448 = [&]() -> std::optional<Expr *> {
+        auto _v460 = r_inversion();
+        if (!_v460) break;
+        auto &a = *_v460;
+        auto _g462 = [&]() -> std::optional<Expr *> {
           {
             size_t _start = pos;
             bool _cut = false;
             do {
-              auto _v449 = tokOpt(expectKeyword("and"));
-              if (!_v449) break;
-              auto _v450 = r_inversion();
-              if (!_v450) break;
-              auto &b = *_v450;
+              auto _v463 = tokOpt(expectKeyword("and"));
+              if (!_v463) break;
+              auto _v464 = r_inversion();
+              if (!_v464) break;
+              auto &b = *_v464;
               [[maybe_unused]] auto LOC = loc(_start);
               return std::optional<Expr *>(b);
             } while (false);
@@ -3843,15 +3951,15 @@ std::optional<Expr *> Parser::r_conjunction() {
           }
           return std::nullopt;
         };
-        std::vector<Expr *> _v447;
+        std::vector<Expr *> _v461;
         while (true) {
           size_t _q = pos;
-          auto _e = _g448();
+          auto _e = _g462();
           if (!_e) { pos = _q; break; }
-          _v447.push_back(std::move(*_e));
+          _v461.push_back(std::move(*_e));
         }
-        if (_v447.empty()) break;
-        auto &rest = _v447;
+        if (_v461.empty()) break;
+        auto &rest = _v461;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>([&]() -> Expr * { 
         Expr *e = a;
@@ -3866,9 +3974,9 @@ std::optional<Expr *> Parser::r_conjunction() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v451 = r_inversion();
-        if (!_v451) break;
-        return std::optional<Expr *>(*_v451);
+        auto _v465 = r_inversion();
+        if (!_v465) break;
+        return std::optional<Expr *>(*_v465);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -3890,12 +3998,12 @@ std::optional<Expr *> Parser::r_inversion() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v452 = tokOpt(expectKeyword("not"));
-        if (!_v452) break;
+        auto _v466 = tokOpt(expectKeyword("not"));
+        if (!_v466) break;
         if (!sp()) break;
-        auto _v453 = r_inversion();
-        if (!_v453) break;
-        auto &i = *_v453;
+        auto _v467 = r_inversion();
+        if (!_v467) break;
+        auto &i = *_v467;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(Unary, LOC, "!", i));
       } while (false);
@@ -3906,9 +4014,9 @@ std::optional<Expr *> Parser::r_inversion() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v454 = r_comparison();
-        if (!_v454) break;
-        return std::optional<Expr *>(*_v454);
+        auto _v468 = r_comparison();
+        if (!_v468) break;
+        return std::optional<Expr *>(*_v468);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -3923,17 +4031,17 @@ std::optional<Expr *> Parser::r_comparison() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v455 = r_bitwise_or();
-      if (!_v455) break;
-      auto &a = *_v455;
-      std::vector<OpExpr> _v456;
+      auto _v469 = r_bitwise_or();
+      if (!_v469) break;
+      auto &a = *_v469;
+      std::vector<OpExpr> _v470;
       while (true) {
         size_t _q = pos;
         auto _e = r_compare_op_bitwise_or();
         if (!_e) { pos = _q; break; }
-        _v456.push_back(std::move(*_e));
+        _v470.push_back(std::move(*_e));
       }
-      auto &ops = _v456;
+      auto &ops = _v470;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>([&]() -> Expr * { 
         if (ops.empty())
@@ -3956,15 +4064,15 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
     bool _cut = false;
     do {
       if (!sp()) break;
-      auto _v457 = tokOpt(expectKeyword("not"));
-      if (!_v457) break;
+      auto _v471 = tokOpt(expectKeyword("not"));
+      if (!_v471) break;
       if (!sp()) break;
-      auto _v458 = tokOpt(expectKeyword("in"));
-      if (!_v458) break;
+      auto _v472 = tokOpt(expectKeyword("in"));
+      if (!_v472) break;
       if (!sp()) break;
-      auto _v459 = r_bitwise_or();
-      if (!_v459) break;
-      auto &b = *_v459;
+      auto _v473 = r_bitwise_or();
+      if (!_v473) break;
+      auto &b = *_v473;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<OpExpr>(OpExpr("not in", b));
     } while (false);
@@ -3976,15 +4084,15 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
     bool _cut = false;
     do {
       if (!sp()) break;
-      auto _v460 = tokOpt(expectKeyword("is"));
-      if (!_v460) break;
+      auto _v474 = tokOpt(expectKeyword("is"));
+      if (!_v474) break;
       if (!sp()) break;
-      auto _v461 = tokOpt(expectKeyword("not"));
-      if (!_v461) break;
+      auto _v475 = tokOpt(expectKeyword("not"));
+      if (!_v475) break;
       if (!sp()) break;
-      auto _v462 = r_bitwise_or();
-      if (!_v462) break;
-      auto &b = *_v462;
+      auto _v476 = r_bitwise_or();
+      if (!_v476) break;
+      auto &b = *_v476;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<OpExpr>(OpExpr("is not", b));
     } while (false);
@@ -3996,12 +4104,12 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
     bool _cut = false;
     do {
       if (!sp()) break;
-      auto _v463 = tokOpt(expectKeyword("in"));
-      if (!_v463) break;
+      auto _v477 = tokOpt(expectKeyword("in"));
+      if (!_v477) break;
       if (!sp()) break;
-      auto _v464 = r_bitwise_or();
-      if (!_v464) break;
-      auto &b = *_v464;
+      auto _v478 = r_bitwise_or();
+      if (!_v478) break;
+      auto &b = *_v478;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<OpExpr>(OpExpr("in", b));
     } while (false);
@@ -4013,12 +4121,12 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
     bool _cut = false;
     do {
       if (!sp()) break;
-      auto _v465 = tokOpt(expectKeyword("is"));
-      if (!_v465) break;
+      auto _v479 = tokOpt(expectKeyword("is"));
+      if (!_v479) break;
       if (!sp()) break;
-      auto _v466 = r_bitwise_or();
-      if (!_v466) break;
-      auto &b = *_v466;
+      auto _v480 = r_bitwise_or();
+      if (!_v480) break;
+      auto &b = *_v480;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<OpExpr>(OpExpr("is", b));
     } while (false);
@@ -4029,14 +4137,14 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _g468 = [&]() -> std::optional<const Token *> {
+      auto _g482 = [&]() -> std::optional<const Token *> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v469 = tokOpt(expectOp("=="));
-            if (!_v469) break;
-            return std::optional<const Token *>(*_v469);
+            auto _v483 = tokOpt(expectOp("=="));
+            if (!_v483) break;
+            return std::optional<const Token *>(*_v483);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4045,9 +4153,9 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v470 = tokOpt(expectOp("!="));
-            if (!_v470) break;
-            return std::optional<const Token *>(*_v470);
+            auto _v484 = tokOpt(expectOp("!="));
+            if (!_v484) break;
+            return std::optional<const Token *>(*_v484);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4056,9 +4164,9 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v471 = tokOpt(expectOp("<="));
-            if (!_v471) break;
-            return std::optional<const Token *>(*_v471);
+            auto _v485 = tokOpt(expectOp("<="));
+            if (!_v485) break;
+            return std::optional<const Token *>(*_v485);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4067,9 +4175,9 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v472 = tokOpt(expectOp("<"));
-            if (!_v472) break;
-            return std::optional<const Token *>(*_v472);
+            auto _v486 = tokOpt(expectOp("<"));
+            if (!_v486) break;
+            return std::optional<const Token *>(*_v486);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4078,9 +4186,9 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v473 = tokOpt(expectOp(">="));
-            if (!_v473) break;
-            return std::optional<const Token *>(*_v473);
+            auto _v487 = tokOpt(expectOp(">="));
+            if (!_v487) break;
+            return std::optional<const Token *>(*_v487);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4089,21 +4197,21 @@ std::optional<OpExpr> Parser::r_compare_op_bitwise_or() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v474 = tokOpt(expectOp(">"));
-            if (!_v474) break;
-            return std::optional<const Token *>(*_v474);
+            auto _v488 = tokOpt(expectOp(">"));
+            if (!_v488) break;
+            return std::optional<const Token *>(*_v488);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
         }
         return std::nullopt;
       };
-      auto _v467 = _g468();
-      if (!_v467) break;
-      auto &o = *_v467;
-      auto _v475 = r_bitwise_or();
-      if (!_v475) break;
-      auto &b = *_v475;
+      auto _v481 = _g482();
+      if (!_v481) break;
+      auto &o = *_v481;
+      auto _v489 = r_bitwise_or();
+      if (!_v489) break;
+      auto &b = *_v489;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<OpExpr>(OpExpr(str(o), b));
     } while (false);
@@ -4117,20 +4225,20 @@ std::optional<Expr *> Parser::r_bitwise_or() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v476 = r_bitwise_xor();
-      if (!_v476) break;
-      auto &a = *_v476;
-      auto _g478 = [&]() -> std::optional<OpExpr> {
+      auto _v490 = r_bitwise_xor();
+      if (!_v490) break;
+      auto &a = *_v490;
+      auto _g492 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v479 = tokOpt(expectOp("|"));
-            if (!_v479) break;
-            auto &o = *_v479;
-            auto _v480 = r_bitwise_xor();
-            if (!_v480) break;
-            auto &b = *_v480;
+            auto _v493 = tokOpt(expectOp("|"));
+            if (!_v493) break;
+            auto &o = *_v493;
+            auto _v494 = r_bitwise_xor();
+            if (!_v494) break;
+            auto &b = *_v494;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(str(o), b));
           } while (false);
@@ -4139,14 +4247,14 @@ std::optional<Expr *> Parser::r_bitwise_or() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v477;
+      std::vector<OpExpr> _v491;
       while (true) {
         size_t _q = pos;
-        auto _e = _g478();
+        auto _e = _g492();
         if (!_e) { pos = _q; break; }
-        _v477.push_back(std::move(*_e));
+        _v491.push_back(std::move(*_e));
       }
-      auto &rest = _v477;
+      auto &rest = _v491;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(chain(CTX, a, rest, LOC));
     } while (false);
@@ -4160,20 +4268,20 @@ std::optional<Expr *> Parser::r_bitwise_xor() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v481 = r_bitwise_and();
-      if (!_v481) break;
-      auto &a = *_v481;
-      auto _g483 = [&]() -> std::optional<OpExpr> {
+      auto _v495 = r_bitwise_and();
+      if (!_v495) break;
+      auto &a = *_v495;
+      auto _g497 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v484 = tokOpt(expectOp("^"));
-            if (!_v484) break;
-            auto &o = *_v484;
-            auto _v485 = r_bitwise_and();
-            if (!_v485) break;
-            auto &b = *_v485;
+            auto _v498 = tokOpt(expectOp("^"));
+            if (!_v498) break;
+            auto &o = *_v498;
+            auto _v499 = r_bitwise_and();
+            if (!_v499) break;
+            auto &b = *_v499;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(str(o), b));
           } while (false);
@@ -4182,14 +4290,14 @@ std::optional<Expr *> Parser::r_bitwise_xor() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v482;
+      std::vector<OpExpr> _v496;
       while (true) {
         size_t _q = pos;
-        auto _e = _g483();
+        auto _e = _g497();
         if (!_e) { pos = _q; break; }
-        _v482.push_back(std::move(*_e));
+        _v496.push_back(std::move(*_e));
       }
-      auto &rest = _v482;
+      auto &rest = _v496;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(chain(CTX, a, rest, LOC));
     } while (false);
@@ -4203,20 +4311,20 @@ std::optional<Expr *> Parser::r_bitwise_and() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v486 = r_shift_expr();
-      if (!_v486) break;
-      auto &a = *_v486;
-      auto _g488 = [&]() -> std::optional<OpExpr> {
+      auto _v500 = r_shift_expr();
+      if (!_v500) break;
+      auto &a = *_v500;
+      auto _g502 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v489 = tokOpt(expectOp("&"));
-            if (!_v489) break;
-            auto &o = *_v489;
-            auto _v490 = r_shift_expr();
-            if (!_v490) break;
-            auto &b = *_v490;
+            auto _v503 = tokOpt(expectOp("&"));
+            if (!_v503) break;
+            auto &o = *_v503;
+            auto _v504 = r_shift_expr();
+            if (!_v504) break;
+            auto &b = *_v504;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(str(o), b));
           } while (false);
@@ -4225,14 +4333,14 @@ std::optional<Expr *> Parser::r_bitwise_and() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v487;
+      std::vector<OpExpr> _v501;
       while (true) {
         size_t _q = pos;
-        auto _e = _g488();
+        auto _e = _g502();
         if (!_e) { pos = _q; break; }
-        _v487.push_back(std::move(*_e));
+        _v501.push_back(std::move(*_e));
       }
-      auto &rest = _v487;
+      auto &rest = _v501;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(chain(CTX, a, rest, LOC));
     } while (false);
@@ -4246,22 +4354,22 @@ std::optional<Expr *> Parser::r_shift_expr() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v491 = r_sum();
-      if (!_v491) break;
-      auto &a = *_v491;
-      auto _g493 = [&]() -> std::optional<OpExpr> {
+      auto _v505 = r_sum();
+      if (!_v505) break;
+      auto &a = *_v505;
+      auto _g507 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _g495 = [&]() -> std::optional<const Token *> {
+            auto _g509 = [&]() -> std::optional<const Token *> {
               {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v496 = tokOpt(expectOp("<<"));
-                  if (!_v496) break;
-                  return std::optional<const Token *>(*_v496);
+                  auto _v510 = tokOpt(expectOp("<<"));
+                  if (!_v510) break;
+                  return std::optional<const Token *>(*_v510);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
@@ -4270,21 +4378,21 @@ std::optional<Expr *> Parser::r_shift_expr() {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v497 = tokOpt(expectOp(">>"));
-                  if (!_v497) break;
-                  return std::optional<const Token *>(*_v497);
+                  auto _v511 = tokOpt(expectOp(">>"));
+                  if (!_v511) break;
+                  return std::optional<const Token *>(*_v511);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
               }
               return std::nullopt;
             };
-            auto _v494 = _g495();
-            if (!_v494) break;
-            auto &o = *_v494;
-            auto _v498 = r_sum();
-            if (!_v498) break;
-            auto &b = *_v498;
+            auto _v508 = _g509();
+            if (!_v508) break;
+            auto &o = *_v508;
+            auto _v512 = r_sum();
+            if (!_v512) break;
+            auto &b = *_v512;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(str(o), b));
           } while (false);
@@ -4293,14 +4401,14 @@ std::optional<Expr *> Parser::r_shift_expr() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v492;
+      std::vector<OpExpr> _v506;
       while (true) {
         size_t _q = pos;
-        auto _e = _g493();
+        auto _e = _g507();
         if (!_e) { pos = _q; break; }
-        _v492.push_back(std::move(*_e));
+        _v506.push_back(std::move(*_e));
       }
-      auto &rest = _v492;
+      auto &rest = _v506;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(chain(CTX, a, rest, LOC));
     } while (false);
@@ -4314,22 +4422,22 @@ std::optional<Expr *> Parser::r_sum() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v499 = r_term();
-      if (!_v499) break;
-      auto &a = *_v499;
-      auto _g501 = [&]() -> std::optional<OpExpr> {
+      auto _v513 = r_term();
+      if (!_v513) break;
+      auto &a = *_v513;
+      auto _g515 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _g503 = [&]() -> std::optional<const Token *> {
+            auto _g517 = [&]() -> std::optional<const Token *> {
               {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v504 = tokOpt(expectOp("+"));
-                  if (!_v504) break;
-                  return std::optional<const Token *>(*_v504);
+                  auto _v518 = tokOpt(expectOp("+"));
+                  if (!_v518) break;
+                  return std::optional<const Token *>(*_v518);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
@@ -4338,21 +4446,21 @@ std::optional<Expr *> Parser::r_sum() {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v505 = tokOpt(expectOp("-"));
-                  if (!_v505) break;
-                  return std::optional<const Token *>(*_v505);
+                  auto _v519 = tokOpt(expectOp("-"));
+                  if (!_v519) break;
+                  return std::optional<const Token *>(*_v519);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
               }
               return std::nullopt;
             };
-            auto _v502 = _g503();
-            if (!_v502) break;
-            auto &o = *_v502;
-            auto _v506 = r_term();
-            if (!_v506) break;
-            auto &b = *_v506;
+            auto _v516 = _g517();
+            if (!_v516) break;
+            auto &o = *_v516;
+            auto _v520 = r_term();
+            if (!_v520) break;
+            auto &b = *_v520;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(str(o), b));
           } while (false);
@@ -4361,14 +4469,14 @@ std::optional<Expr *> Parser::r_sum() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v500;
+      std::vector<OpExpr> _v514;
       while (true) {
         size_t _q = pos;
-        auto _e = _g501();
+        auto _e = _g515();
         if (!_e) { pos = _q; break; }
-        _v500.push_back(std::move(*_e));
+        _v514.push_back(std::move(*_e));
       }
-      auto &rest = _v500;
+      auto &rest = _v514;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(chain(CTX, a, rest, LOC));
     } while (false);
@@ -4382,22 +4490,22 @@ std::optional<Expr *> Parser::r_term() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v507 = r_factor();
-      if (!_v507) break;
-      auto &a = *_v507;
-      auto _g509 = [&]() -> std::optional<OpExpr> {
+      auto _v521 = r_factor();
+      if (!_v521) break;
+      auto &a = *_v521;
+      auto _g523 = [&]() -> std::optional<OpExpr> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _g511 = [&]() -> std::optional<const Token *> {
+            auto _g525 = [&]() -> std::optional<const Token *> {
               {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v512 = tokOpt(expectOp("*"));
-                  if (!_v512) break;
-                  return std::optional<const Token *>(*_v512);
+                  auto _v526 = tokOpt(expectOp("*"));
+                  if (!_v526) break;
+                  return std::optional<const Token *>(*_v526);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
@@ -4406,9 +4514,9 @@ std::optional<Expr *> Parser::r_term() {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v513 = tokOpt(expectOp("//"));
-                  if (!_v513) break;
-                  return std::optional<const Token *>(*_v513);
+                  auto _v527 = tokOpt(expectOp("//"));
+                  if (!_v527) break;
+                  return std::optional<const Token *>(*_v527);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
@@ -4417,9 +4525,9 @@ std::optional<Expr *> Parser::r_term() {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v514 = tokOpt(expectOp("/"));
-                  if (!_v514) break;
-                  return std::optional<const Token *>(*_v514);
+                  auto _v528 = tokOpt(expectOp("/"));
+                  if (!_v528) break;
+                  return std::optional<const Token *>(*_v528);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
@@ -4428,9 +4536,9 @@ std::optional<Expr *> Parser::r_term() {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v515 = tokOpt(expectOp("%"));
-                  if (!_v515) break;
-                  return std::optional<const Token *>(*_v515);
+                  auto _v529 = tokOpt(expectOp("%"));
+                  if (!_v529) break;
+                  return std::optional<const Token *>(*_v529);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
@@ -4439,21 +4547,21 @@ std::optional<Expr *> Parser::r_term() {
                 size_t _start = pos;
                 bool _cut = false;
                 do {
-                  auto _v516 = tokOpt(expectOp("@"));
-                  if (!_v516) break;
-                  return std::optional<const Token *>(*_v516);
+                  auto _v530 = tokOpt(expectOp("@"));
+                  if (!_v530) break;
+                  return std::optional<const Token *>(*_v530);
                 } while (false);
                 pos = _start;
                 if (_cut) return std::nullopt;
               }
               return std::nullopt;
             };
-            auto _v510 = _g511();
-            if (!_v510) break;
-            auto &o = *_v510;
-            auto _v517 = r_factor();
-            if (!_v517) break;
-            auto &b = *_v517;
+            auto _v524 = _g525();
+            if (!_v524) break;
+            auto &o = *_v524;
+            auto _v531 = r_factor();
+            if (!_v531) break;
+            auto &b = *_v531;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<OpExpr>(OpExpr(str(o), b));
           } while (false);
@@ -4462,14 +4570,14 @@ std::optional<Expr *> Parser::r_term() {
         }
         return std::nullopt;
       };
-      std::vector<OpExpr> _v508;
+      std::vector<OpExpr> _v522;
       while (true) {
         size_t _q = pos;
-        auto _e = _g509();
+        auto _e = _g523();
         if (!_e) { pos = _q; break; }
-        _v508.push_back(std::move(*_e));
+        _v522.push_back(std::move(*_e));
       }
-      auto &rest = _v508;
+      auto &rest = _v522;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(chain(CTX, a, rest, LOC));
     } while (false);
@@ -4483,14 +4591,14 @@ std::optional<Expr *> Parser::r_factor() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _g519 = [&]() -> std::optional<const Token *> {
+      auto _g533 = [&]() -> std::optional<const Token *> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v520 = tokOpt(expectOp("+"));
-            if (!_v520) break;
-            return std::optional<const Token *>(*_v520);
+            auto _v534 = tokOpt(expectOp("+"));
+            if (!_v534) break;
+            return std::optional<const Token *>(*_v534);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4499,9 +4607,9 @@ std::optional<Expr *> Parser::r_factor() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v521 = tokOpt(expectOp("-"));
-            if (!_v521) break;
-            return std::optional<const Token *>(*_v521);
+            auto _v535 = tokOpt(expectOp("-"));
+            if (!_v535) break;
+            return std::optional<const Token *>(*_v535);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
@@ -4510,21 +4618,21 @@ std::optional<Expr *> Parser::r_factor() {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v522 = tokOpt(expectOp("~"));
-            if (!_v522) break;
-            return std::optional<const Token *>(*_v522);
+            auto _v536 = tokOpt(expectOp("~"));
+            if (!_v536) break;
+            return std::optional<const Token *>(*_v536);
           } while (false);
           pos = _start;
           if (_cut) return std::nullopt;
         }
         return std::nullopt;
       };
-      auto _v518 = _g519();
-      if (!_v518) break;
-      auto &o = *_v518;
-      auto _v523 = r_factor();
-      if (!_v523) break;
-      auto &f = *_v523;
+      auto _v532 = _g533();
+      if (!_v532) break;
+      auto &o = *_v532;
+      auto _v537 = r_factor();
+      if (!_v537) break;
+      auto &f = *_v537;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Unary, LOC, str(o), f));
     } while (false);
@@ -4535,9 +4643,9 @@ std::optional<Expr *> Parser::r_factor() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v524 = r_power();
-      if (!_v524) break;
-      return std::optional<Expr *>(*_v524);
+      auto _v538 = r_power();
+      if (!_v538) break;
+      return std::optional<Expr *>(*_v538);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -4549,14 +4657,14 @@ std::optional<Expr *> Parser::r_power() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v525 = r_await_primary();
-      if (!_v525) break;
-      auto &a = *_v525;
-      auto _v526 = tokOpt(expectOp("**"));
-      if (!_v526) break;
-      auto _v527 = r_factor();
-      if (!_v527) break;
-      auto &f = *_v527;
+      auto _v539 = r_await_primary();
+      if (!_v539) break;
+      auto &a = *_v539;
+      auto _v540 = tokOpt(expectOp("**"));
+      if (!_v540) break;
+      auto _v541 = r_factor();
+      if (!_v541) break;
+      auto &f = *_v541;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Binary, LOC, a, "**", f));
     } while (false);
@@ -4567,9 +4675,9 @@ std::optional<Expr *> Parser::r_power() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v528 = r_await_primary();
-      if (!_v528) break;
-      return std::optional<Expr *>(*_v528);
+      auto _v542 = r_await_primary();
+      if (!_v542) break;
+      return std::optional<Expr *>(*_v542);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -4588,12 +4696,12 @@ std::optional<Expr *> Parser::r_await_primary() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v529 = tokOpt(expectKeyword("await"));
-        if (!_v529) break;
+        auto _v543 = tokOpt(expectKeyword("await"));
+        if (!_v543) break;
         if (!sp()) break;
-        auto _v530 = r_primary();
-        if (!_v530) break;
-        auto &p = *_v530;
+        auto _v544 = r_primary();
+        if (!_v544) break;
+        auto &p = *_v544;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(Await, LOC, p));
       } while (false);
@@ -4604,9 +4712,9 @@ std::optional<Expr *> Parser::r_await_primary() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v531 = r_primary();
-        if (!_v531) break;
-        return std::optional<Expr *>(*_v531);
+        auto _v545 = r_primary();
+        if (!_v545) break;
+        return std::optional<Expr *>(*_v545);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -4628,17 +4736,17 @@ std::optional<Expr *> Parser::r_primary() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v532 = r_atom();
-        if (!_v532) break;
-        auto &a = *_v532;
-        std::vector<PrimaryTail> _v533;
+        auto _v546 = r_atom();
+        if (!_v546) break;
+        auto &a = *_v546;
+        std::vector<PrimaryTail> _v547;
         while (true) {
           size_t _q = pos;
           auto _e = r_primary_tail();
           if (!_e) { pos = _q; break; }
-          _v533.push_back(std::move(*_e));
+          _v547.push_back(std::move(*_e));
         }
-        auto &tails = _v533;
+        auto &tails = _v547;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>([&]() -> Expr * { 
         Expr *e = a;
@@ -4668,11 +4776,11 @@ std::optional<PrimaryTail> Parser::r_primary_tail() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v534 = tokOpt(expectOp("."));
-      if (!_v534) break;
-      auto _v535 = r_name();
-      if (!_v535) break;
-      auto &n = *_v535;
+      auto _v548 = tokOpt(expectOp("."));
+      if (!_v548) break;
+      auto _v549 = r_name();
+      if (!_v549) break;
+      auto &n = *_v549;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<PrimaryTail>(PrimaryTail{0, n, nullptr, {}});
     } while (false);
@@ -4683,9 +4791,9 @@ std::optional<PrimaryTail> Parser::r_primary_tail() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v536 = r_genexp();
-      if (!_v536) break;
-      auto &g = *_v536;
+      auto _v550 = r_genexp();
+      if (!_v550) break;
+      auto &g = *_v550;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<PrimaryTail>(PrimaryTail{1, "", g, {}});
     } while (false);
@@ -4696,9 +4804,9 @@ std::optional<PrimaryTail> Parser::r_primary_tail() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v537 = r_arguments();
-      if (!_v537) break;
-      auto &a = *_v537;
+      auto _v551 = r_arguments();
+      if (!_v551) break;
+      auto &a = *_v551;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<PrimaryTail>(PrimaryTail{2, "", nullptr, a});
     } while (false);
@@ -4709,9 +4817,9 @@ std::optional<PrimaryTail> Parser::r_primary_tail() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v538 = r_slices();
-      if (!_v538) break;
-      auto &s = *_v538;
+      auto _v552 = r_slices();
+      if (!_v552) break;
+      auto &s = *_v552;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<PrimaryTail>(PrimaryTail{3, "", s, {}});
     } while (false);
@@ -4725,25 +4833,25 @@ std::optional<Expr *> Parser::r_slices() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v539 = tokOpt(expectOp("["));
-      if (!_v539) break;
-      std::vector<Expr *> _v540;
+      auto _v553 = tokOpt(expectOp("["));
+      if (!_v553) break;
+      std::vector<Expr *> _v554;
       if (auto _e = r_slice()) {
-        _v540.push_back(std::move(*_e));
+        _v554.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_slice();
           if (!_f) { pos = _q; break; }
-          _v540.push_back(std::move(*_f));
+          _v554.push_back(std::move(*_f));
         }
       }
-      if (_v540.empty()) break;
-      auto &xs = _v540;
-      auto _v541 = tokOpt(expectOp(","));
-      auto &c = _v541;
-      auto _v542 = tokOpt(expectOp("]"));
-      if (!_v542) break;
+      if (_v554.empty()) break;
+      auto &xs = _v554;
+      auto _v555 = tokOpt(expectOp(","));
+      auto &c = _v555;
+      auto _v556 = tokOpt(expectOp("]"));
+      if (!_v556) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
     } while (false);
@@ -4757,24 +4865,24 @@ std::optional<Expr *> Parser::r_slice() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v543 = r_slice_part();
-      if (!_v543) break;
-      auto &a = *_v543;
-      auto _v544 = tokOpt(expectOp(":"));
-      if (!_v544) break;
-      auto _v545 = r_slice_part();
-      if (!_v545) break;
-      auto &b = *_v545;
-      auto _g547 = [&]() -> std::optional<Expr *> {
+      auto _v557 = r_slice_part();
+      if (!_v557) break;
+      auto &a = *_v557;
+      auto _v558 = tokOpt(expectOp(":"));
+      if (!_v558) break;
+      auto _v559 = r_slice_part();
+      if (!_v559) break;
+      auto &b = *_v559;
+      auto _g561 = [&]() -> std::optional<Expr *> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v548 = tokOpt(expectOp(":"));
-            if (!_v548) break;
-            auto _v549 = r_slice_part();
-            if (!_v549) break;
-            auto &x = *_v549;
+            auto _v562 = tokOpt(expectOp(":"));
+            if (!_v562) break;
+            auto _v563 = r_slice_part();
+            if (!_v563) break;
+            auto &x = *_v563;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<Expr *>(x);
           } while (false);
@@ -4783,8 +4891,8 @@ std::optional<Expr *> Parser::r_slice() {
         }
         return std::nullopt;
       };
-      auto _v546 = _g547();
-      auto &c = _v546;
+      auto _v560 = _g561();
+      auto &c = _v560;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Slice, LOC, a, b, c ? *c : nullptr));
     } while (false);
@@ -4795,9 +4903,9 @@ std::optional<Expr *> Parser::r_slice() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v550 = r_expression();
-      if (!_v550) break;
-      return std::optional<Expr *>(*_v550);
+      auto _v564 = r_expression();
+      if (!_v564) break;
+      return std::optional<Expr *>(*_v564);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -4809,8 +4917,8 @@ std::optional<Expr *> Parser::r_slice_part() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v551 = r_expression();
-      auto &e = _v551;
+      auto _v565 = r_expression();
+      auto &e = _v565;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(e ? *e : nullptr);
     } while (false);
@@ -4824,9 +4932,9 @@ std::optional<StringExpr::String> Parser::r_string() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v552 = tokOpt(expectKind(Kind::String));
-      if (!_v552) break;
-      auto &t = *_v552;
+      auto _v566 = tokOpt(expectKind(Kind::String));
+      if (!_v566) break;
+      auto &t = *_v566;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<StringExpr::String>([&]() -> StringExpr::String { 
         auto s = text(t);
@@ -4858,9 +4966,9 @@ std::optional<std::string> Parser::r_int_lit() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v553 = tokOpt(expectKind(Kind::Number));
-      if (!_v553) break;
-      auto &t = *_v553;
+      auto _v567 = tokOpt(expectKind(Kind::Number));
+      if (!_v567) break;
+      auto &t = *_v567;
       if (!(!isFloatText(text(t)))) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::string>(str(t));
@@ -4875,9 +4983,9 @@ std::optional<std::string> Parser::r_float_lit() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v554 = tokOpt(expectKind(Kind::Number));
-      if (!_v554) break;
-      auto &t = *_v554;
+      auto _v568 = tokOpt(expectKind(Kind::Number));
+      if (!_v568) break;
+      auto &t = *_v568;
       if (!(isFloatText(text(t)))) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::string>(str(t));
@@ -4892,18 +5000,18 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v555 = r_string();
-      if (!_v555) break;
-      auto &s = *_v555;
-      auto _g557 = [&]() -> std::optional<StringExpr::String> {
+      auto _v569 = r_string();
+      if (!_v569) break;
+      auto &s = *_v569;
+      auto _g571 = [&]() -> std::optional<StringExpr::String> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
             if (!sp()) break;
-            auto _v558 = r_string();
-            if (!_v558) break;
-            auto &x = *_v558;
+            auto _v572 = r_string();
+            if (!_v572) break;
+            auto &x = *_v572;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<StringExpr::String>(x);
           } while (false);
@@ -4912,14 +5020,14 @@ std::optional<Expr *> Parser::r_atom() {
         }
         return std::nullopt;
       };
-      std::vector<StringExpr::String> _v556;
+      std::vector<StringExpr::String> _v570;
       while (true) {
         size_t _q = pos;
-        auto _e = _g557();
+        auto _e = _g571();
         if (!_e) { pos = _q; break; }
-        _v556.push_back(std::move(*_e));
+        _v570.push_back(std::move(*_e));
       }
-      auto &rest = _v556;
+      auto &rest = _v570;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>([&]() -> Expr * { 
         std::vector<StringExpr::String> v{s};
@@ -4934,9 +5042,9 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v559 = r_id();
-      if (!_v559) break;
-      return std::optional<Expr *>(*_v559);
+      auto _v573 = r_id();
+      if (!_v573) break;
+      return std::optional<Expr *>(*_v573);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -4945,8 +5053,8 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v560 = tokOpt(expectKeyword("True"));
-      if (!_v560) break;
+      auto _v574 = tokOpt(expectKeyword("True"));
+      if (!_v574) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Bool, LOC, true));
     } while (false);
@@ -4957,8 +5065,8 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v561 = tokOpt(expectKeyword("False"));
-      if (!_v561) break;
+      auto _v575 = tokOpt(expectKeyword("False"));
+      if (!_v575) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Bool, LOC, false));
     } while (false);
@@ -4969,8 +5077,8 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v562 = tokOpt(expectKeyword("None"));
-      if (!_v562) break;
+      auto _v576 = tokOpt(expectKeyword("None"));
+      if (!_v576) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(None, LOC));
     } while (false);
@@ -4981,14 +5089,14 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v563 = r_int_lit();
-      if (!_v563) break;
-      auto &a = *_v563;
-      auto _v564 = tokOpt(expectOp("..."));
-      if (!_v564) break;
-      auto _v565 = r_int_lit();
-      if (!_v565) break;
-      auto &b = *_v565;
+      auto _v577 = r_int_lit();
+      if (!_v577) break;
+      auto &a = *_v577;
+      auto _v578 = tokOpt(expectOp("..."));
+      if (!_v578) break;
+      auto _v579 = r_int_lit();
+      if (!_v579) break;
+      auto &b = *_v579;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Range, LOC, aste(Int, LOC, a), aste(Int, LOC, b)));
     } while (false);
@@ -4999,18 +5107,18 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v566 = r_float_lit();
-      if (!_v566) break;
-      auto &f = *_v566;
-      auto _g568 = [&]() -> std::optional<std::string> {
+      auto _v580 = r_float_lit();
+      if (!_v580) break;
+      auto &f = *_v580;
+      auto _g582 = [&]() -> std::optional<std::string> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
             if (sp()) break;
-            auto _v569 = r_name();
-            if (!_v569) break;
-            auto &n = *_v569;
+            auto _v583 = r_name();
+            if (!_v583) break;
+            auto &n = *_v583;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::string>(n);
           } while (false);
@@ -5019,8 +5127,8 @@ std::optional<Expr *> Parser::r_atom() {
         }
         return std::nullopt;
       };
-      auto _v567 = _g568();
-      auto &s = _v567;
+      auto _v581 = _g582();
+      auto &s = _v581;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Float, LOC, f, s ? *s : std::string()));
     } while (false);
@@ -5031,18 +5139,18 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v570 = r_int_lit();
-      if (!_v570) break;
-      auto &i = *_v570;
-      auto _g572 = [&]() -> std::optional<std::string> {
+      auto _v584 = r_int_lit();
+      if (!_v584) break;
+      auto &i = *_v584;
+      auto _g586 = [&]() -> std::optional<std::string> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
             if (sp()) break;
-            auto _v573 = r_name();
-            if (!_v573) break;
-            auto &n = *_v573;
+            auto _v587 = r_name();
+            if (!_v587) break;
+            auto &n = *_v587;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::string>(n);
           } while (false);
@@ -5051,8 +5159,8 @@ std::optional<Expr *> Parser::r_atom() {
         }
         return std::nullopt;
       };
-      auto _v571 = _g572();
-      auto &s = _v571;
+      auto _v585 = _g586();
+      auto &s = _v585;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Int, LOC, i, s ? *s : std::string()));
     } while (false);
@@ -5063,9 +5171,9 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v574 = r_parentheses();
-      if (!_v574) break;
-      return std::optional<Expr *>(*_v574);
+      auto _v588 = r_parentheses();
+      if (!_v588) break;
+      return std::optional<Expr *>(*_v588);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5074,8 +5182,8 @@ std::optional<Expr *> Parser::r_atom() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v575 = tokOpt(expectOp("..."));
-      if (!_v575) break;
+      auto _v589 = tokOpt(expectOp("..."));
+      if (!_v589) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Ellipsis, LOC));
     } while (false);
@@ -5089,9 +5197,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v576 = r_tuple();
-      if (!_v576) break;
-      return std::optional<Expr *>(*_v576);
+      auto _v590 = r_tuple();
+      if (!_v590) break;
+      return std::optional<Expr *>(*_v590);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5100,9 +5208,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v577 = r_yield_();
-      if (!_v577) break;
-      return std::optional<Expr *>(*_v577);
+      auto _v591 = r_yield_();
+      if (!_v591) break;
+      return std::optional<Expr *>(*_v591);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5111,9 +5219,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v578 = r_named();
-      if (!_v578) break;
-      return std::optional<Expr *>(*_v578);
+      auto _v592 = r_named();
+      if (!_v592) break;
+      return std::optional<Expr *>(*_v592);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5122,9 +5230,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v579 = r_genexp();
-      if (!_v579) break;
-      return std::optional<Expr *>(*_v579);
+      auto _v593 = r_genexp();
+      if (!_v593) break;
+      return std::optional<Expr *>(*_v593);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5133,9 +5241,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v580 = r_listexpr();
-      if (!_v580) break;
-      return std::optional<Expr *>(*_v580);
+      auto _v594 = r_listexpr();
+      if (!_v594) break;
+      return std::optional<Expr *>(*_v594);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5144,9 +5252,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v581 = r_listcomp();
-      if (!_v581) break;
-      return std::optional<Expr *>(*_v581);
+      auto _v595 = r_listcomp();
+      if (!_v595) break;
+      return std::optional<Expr *>(*_v595);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5155,9 +5263,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v582 = r_dict();
-      if (!_v582) break;
-      return std::optional<Expr *>(*_v582);
+      auto _v596 = r_dict();
+      if (!_v596) break;
+      return std::optional<Expr *>(*_v596);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5166,9 +5274,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v583 = r_set();
-      if (!_v583) break;
-      return std::optional<Expr *>(*_v583);
+      auto _v597 = r_set();
+      if (!_v597) break;
+      return std::optional<Expr *>(*_v597);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5177,9 +5285,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v584 = r_dictcomp();
-      if (!_v584) break;
-      return std::optional<Expr *>(*_v584);
+      auto _v598 = r_dictcomp();
+      if (!_v598) break;
+      return std::optional<Expr *>(*_v598);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5188,9 +5296,9 @@ std::optional<Expr *> Parser::r_parentheses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v585 = r_setcomp();
-      if (!_v585) break;
-      return std::optional<Expr *>(*_v585);
+      auto _v599 = r_setcomp();
+      if (!_v599) break;
+      return std::optional<Expr *>(*_v599);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5202,10 +5310,10 @@ std::optional<Expr *> Parser::r_tuple() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v586 = tokOpt(expectOp("("));
-      if (!_v586) break;
-      auto _v587 = tokOpt(expectOp(")"));
-      if (!_v587) break;
+      auto _v600 = tokOpt(expectOp("("));
+      if (!_v600) break;
+      auto _v601 = tokOpt(expectOp(")"));
+      if (!_v601) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Tuple, LOC, std::vector<Expr *>{}));
     } while (false);
@@ -5216,25 +5324,25 @@ std::optional<Expr *> Parser::r_tuple() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v588 = tokOpt(expectOp("("));
-      if (!_v588) break;
-      std::vector<Expr *> _v589;
+      auto _v602 = tokOpt(expectOp("("));
+      if (!_v602) break;
+      std::vector<Expr *> _v603;
       if (auto _e = r_star_named_expression()) {
-        _v589.push_back(std::move(*_e));
+        _v603.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_star_named_expression();
           if (!_f) { pos = _q; break; }
-          _v589.push_back(std::move(*_f));
+          _v603.push_back(std::move(*_f));
         }
       }
-      if (_v589.empty()) break;
-      auto &xs = _v589;
-      auto _v590 = tokOpt(expectOp(","));
-      auto &c = _v590;
-      auto _v591 = tokOpt(expectOp(")"));
-      if (!_v591) break;
+      if (_v603.empty()) break;
+      auto &xs = _v603;
+      auto _v604 = tokOpt(expectOp(","));
+      auto &c = _v604;
+      auto _v605 = tokOpt(expectOp(")"));
+      if (!_v605) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
     } while (false);
@@ -5248,12 +5356,12 @@ std::optional<Expr *> Parser::r_yield_() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v592 = tokOpt(expectOp("("));
-      if (!_v592) break;
-      auto _v593 = tokOpt(expectKeyword("yield"));
-      if (!_v593) break;
-      auto _v594 = tokOpt(expectOp(")"));
-      if (!_v594) break;
+      auto _v606 = tokOpt(expectOp("("));
+      if (!_v606) break;
+      auto _v607 = tokOpt(expectKeyword("yield"));
+      if (!_v607) break;
+      auto _v608 = tokOpt(expectOp(")"));
+      if (!_v608) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Yield, LOC));
     } while (false);
@@ -5267,13 +5375,13 @@ std::optional<Expr *> Parser::r_named() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v595 = tokOpt(expectOp("("));
-      if (!_v595) break;
-      auto _v596 = r_named_expression();
-      if (!_v596) break;
-      auto &e = *_v596;
-      auto _v597 = tokOpt(expectOp(")"));
-      if (!_v597) break;
+      auto _v609 = tokOpt(expectOp("("));
+      if (!_v609) break;
+      auto _v610 = r_named_expression();
+      if (!_v610) break;
+      auto &e = *_v610;
+      auto _v611 = tokOpt(expectOp(")"));
+      if (!_v611) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(e);
     } while (false);
@@ -5294,17 +5402,17 @@ std::optional<Expr *> Parser::r_genexp() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v598 = tokOpt(expectOp("("));
-        if (!_v598) break;
-        auto _v599 = r_named_expression();
-        if (!_v599) break;
-        auto &e = *_v599;
+        auto _v612 = tokOpt(expectOp("("));
+        if (!_v612) break;
+        auto _v613 = r_named_expression();
+        if (!_v613) break;
+        auto &e = *_v613;
         if (!sp()) break;
-        auto _v600 = r_for_if_clauses();
-        if (!_v600) break;
-        auto &f = *_v600;
-        auto _v601 = tokOpt(expectOp(")"));
-        if (!_v601) break;
+        auto _v614 = r_for_if_clauses();
+        if (!_v614) break;
+        auto &f = *_v614;
+        auto _v615 = tokOpt(expectOp(")"));
+        if (!_v615) break;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(Generator, LOC, CTX.cache, GeneratorExpr::Generator, e, f));
       } while (false);
@@ -5321,27 +5429,27 @@ std::optional<Expr *> Parser::r_listexpr() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v602 = tokOpt(expectOp("["));
-      if (!_v602) break;
-      auto _g604 = [&]() -> std::optional<std::vector<Expr *>> {
+      auto _v616 = tokOpt(expectOp("["));
+      if (!_v616) break;
+      auto _g618 = [&]() -> std::optional<std::vector<Expr *>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            std::vector<Expr *> _v605;
+            std::vector<Expr *> _v619;
             if (auto _e = r_star_named_expression()) {
-              _v605.push_back(std::move(*_e));
+              _v619.push_back(std::move(*_e));
               while (true) {
                 size_t _q = pos;
                 if (!expectOp(",")) { pos = _q; break; }
                 auto _f = r_star_named_expression();
                 if (!_f) { pos = _q; break; }
-                _v605.push_back(std::move(*_f));
+                _v619.push_back(std::move(*_f));
               }
             }
-            if (_v605.empty()) break;
-            auto &x = _v605;
-            auto _v606 = tokOpt(expectOp(","));
+            if (_v619.empty()) break;
+            auto &x = _v619;
+            auto _v620 = tokOpt(expectOp(","));
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<Expr *>>(x);
           } while (false);
@@ -5350,10 +5458,10 @@ std::optional<Expr *> Parser::r_listexpr() {
         }
         return std::nullopt;
       };
-      auto _v603 = _g604();
-      auto &xs = _v603;
-      auto _v607 = tokOpt(expectOp("]"));
-      if (!_v607) break;
+      auto _v617 = _g618();
+      auto &xs = _v617;
+      auto _v621 = tokOpt(expectOp("]"));
+      if (!_v621) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(List, LOC, xs ? *xs : std::vector<Expr *>{}));
     } while (false);
@@ -5367,17 +5475,17 @@ std::optional<Expr *> Parser::r_listcomp() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v608 = tokOpt(expectOp("["));
-      if (!_v608) break;
-      auto _v609 = r_named_expression();
-      if (!_v609) break;
-      auto &e = *_v609;
+      auto _v622 = tokOpt(expectOp("["));
+      if (!_v622) break;
+      auto _v623 = r_named_expression();
+      if (!_v623) break;
+      auto &e = *_v623;
       if (!sp()) break;
-      auto _v610 = r_for_if_clauses();
-      if (!_v610) break;
-      auto &f = *_v610;
-      auto _v611 = tokOpt(expectOp("]"));
-      if (!_v611) break;
+      auto _v624 = r_for_if_clauses();
+      if (!_v624) break;
+      auto &f = *_v624;
+      auto _v625 = tokOpt(expectOp("]"));
+      if (!_v625) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Generator, LOC, CTX.cache, GeneratorExpr::ListGenerator, e, f));
     } while (false);
@@ -5391,24 +5499,24 @@ std::optional<Expr *> Parser::r_set() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v612 = tokOpt(expectOp("{"));
-      if (!_v612) break;
-      std::vector<Expr *> _v613;
+      auto _v626 = tokOpt(expectOp("{"));
+      if (!_v626) break;
+      std::vector<Expr *> _v627;
       if (auto _e = r_star_named_expression()) {
-        _v613.push_back(std::move(*_e));
+        _v627.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_star_named_expression();
           if (!_f) { pos = _q; break; }
-          _v613.push_back(std::move(*_f));
+          _v627.push_back(std::move(*_f));
         }
       }
-      if (_v613.empty()) break;
-      auto &xs = _v613;
-      auto _v614 = tokOpt(expectOp(","));
-      auto _v615 = tokOpt(expectOp("}"));
-      if (!_v615) break;
+      if (_v627.empty()) break;
+      auto &xs = _v627;
+      auto _v628 = tokOpt(expectOp(","));
+      auto _v629 = tokOpt(expectOp("}"));
+      if (!_v629) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Set, LOC, xs));
     } while (false);
@@ -5422,17 +5530,17 @@ std::optional<Expr *> Parser::r_setcomp() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v616 = tokOpt(expectOp("{"));
-      if (!_v616) break;
-      auto _v617 = r_named_expression();
-      if (!_v617) break;
-      auto &e = *_v617;
+      auto _v630 = tokOpt(expectOp("{"));
+      if (!_v630) break;
+      auto _v631 = r_named_expression();
+      if (!_v631) break;
+      auto &e = *_v631;
       if (!sp()) break;
-      auto _v618 = r_for_if_clauses();
-      if (!_v618) break;
-      auto &f = *_v618;
-      auto _v619 = tokOpt(expectOp("}"));
-      if (!_v619) break;
+      auto _v632 = r_for_if_clauses();
+      if (!_v632) break;
+      auto &f = *_v632;
+      auto _v633 = tokOpt(expectOp("}"));
+      if (!_v633) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Generator, LOC, CTX.cache, GeneratorExpr::SetGenerator, e, f));
     } while (false);
@@ -5446,27 +5554,27 @@ std::optional<Expr *> Parser::r_dict() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v620 = tokOpt(expectOp("{"));
-      if (!_v620) break;
-      auto _g622 = [&]() -> std::optional<std::vector<Expr *>> {
+      auto _v634 = tokOpt(expectOp("{"));
+      if (!_v634) break;
+      auto _g636 = [&]() -> std::optional<std::vector<Expr *>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            std::vector<Expr *> _v623;
+            std::vector<Expr *> _v637;
             if (auto _e = r_double_starred_kvpair()) {
-              _v623.push_back(std::move(*_e));
+              _v637.push_back(std::move(*_e));
               while (true) {
                 size_t _q = pos;
                 if (!expectOp(",")) { pos = _q; break; }
                 auto _f = r_double_starred_kvpair();
                 if (!_f) { pos = _q; break; }
-                _v623.push_back(std::move(*_f));
+                _v637.push_back(std::move(*_f));
               }
             }
-            if (_v623.empty()) break;
-            auto &x = _v623;
-            auto _v624 = tokOpt(expectOp(","));
+            if (_v637.empty()) break;
+            auto &x = _v637;
+            auto _v638 = tokOpt(expectOp(","));
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<Expr *>>(x);
           } while (false);
@@ -5475,10 +5583,10 @@ std::optional<Expr *> Parser::r_dict() {
         }
         return std::nullopt;
       };
-      auto _v621 = _g622();
-      auto &xs = _v621;
-      auto _v625 = tokOpt(expectOp("}"));
-      if (!_v625) break;
+      auto _v635 = _g636();
+      auto &xs = _v635;
+      auto _v639 = tokOpt(expectOp("}"));
+      if (!_v639) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Dict, LOC, xs ? *xs : std::vector<Expr *>{}));
     } while (false);
@@ -5492,17 +5600,17 @@ std::optional<Expr *> Parser::r_dictcomp() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v626 = tokOpt(expectOp("{"));
-      if (!_v626) break;
-      auto _v627 = r_kvpair();
-      if (!_v627) break;
-      auto &p = *_v627;
+      auto _v640 = tokOpt(expectOp("{"));
+      if (!_v640) break;
+      auto _v641 = r_kvpair();
+      if (!_v641) break;
+      auto &p = *_v641;
       if (!sp()) break;
-      auto _v628 = r_for_if_clauses();
-      if (!_v628) break;
-      auto &f = *_v628;
-      auto _v629 = tokOpt(expectOp("}"));
-      if (!_v629) break;
+      auto _v642 = r_for_if_clauses();
+      if (!_v642) break;
+      auto &f = *_v642;
+      auto _v643 = tokOpt(expectOp("}"));
+      if (!_v643) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Generator, LOC, CTX.cache, (*cast<TupleExpr>(p))[0], (*cast<TupleExpr>(p))[1], f));
     } while (false);
@@ -5516,11 +5624,11 @@ std::optional<Expr *> Parser::r_double_starred_kvpair() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v630 = tokOpt(expectOp("**"));
-      if (!_v630) break;
-      auto _v631 = r_bitwise_or();
-      if (!_v631) break;
-      auto &b = *_v631;
+      auto _v644 = tokOpt(expectOp("**"));
+      if (!_v644) break;
+      auto _v645 = r_bitwise_or();
+      if (!_v645) break;
+      auto &b = *_v645;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(KeywordStar, LOC, b));
     } while (false);
@@ -5531,9 +5639,9 @@ std::optional<Expr *> Parser::r_double_starred_kvpair() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v632 = r_kvpair();
-      if (!_v632) break;
-      return std::optional<Expr *>(*_v632);
+      auto _v646 = r_kvpair();
+      if (!_v646) break;
+      return std::optional<Expr *>(*_v646);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5545,14 +5653,14 @@ std::optional<Expr *> Parser::r_kvpair() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v633 = r_expression();
-      if (!_v633) break;
-      auto &a = *_v633;
-      auto _v634 = tokOpt(expectOp(":"));
-      if (!_v634) break;
-      auto _v635 = r_expression();
-      if (!_v635) break;
-      auto &b = *_v635;
+      auto _v647 = r_expression();
+      if (!_v647) break;
+      auto &a = *_v647;
+      auto _v648 = tokOpt(expectOp(":"));
+      if (!_v648) break;
+      auto _v649 = r_expression();
+      if (!_v649) break;
+      auto &b = *_v649;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Tuple, LOC, std::vector<Expr *>{a, b}));
     } while (false);
@@ -5566,18 +5674,18 @@ std::optional<std::vector<Stmt *>> Parser::r_for_if_clauses() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v636 = r_for_if_clause_async();
-      if (!_v636) break;
-      auto &a = *_v636;
-      auto _g638 = [&]() -> std::optional<std::vector<Stmt *>> {
+      auto _v650 = r_for_if_clause_async();
+      if (!_v650) break;
+      auto &a = *_v650;
+      auto _g652 = [&]() -> std::optional<std::vector<Stmt *>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
             if (!sp()) break;
-            auto _v639 = r_for_if_clause_async();
-            if (!_v639) break;
-            auto &x = *_v639;
+            auto _v653 = r_for_if_clause_async();
+            if (!_v653) break;
+            auto &x = *_v653;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<Stmt *>>(x);
           } while (false);
@@ -5586,14 +5694,14 @@ std::optional<std::vector<Stmt *>> Parser::r_for_if_clauses() {
         }
         return std::nullopt;
       };
-      std::vector<std::vector<Stmt *>> _v637;
+      std::vector<std::vector<Stmt *>> _v651;
       while (true) {
         size_t _q = pos;
-        auto _e = _g638();
+        auto _e = _g652();
         if (!_e) { pos = _q; break; }
-        _v637.push_back(std::move(*_e));
+        _v651.push_back(std::move(*_e));
       }
-      auto &rest = _v637;
+      auto &rest = _v651;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<Stmt *>>([&]() -> std::vector<Stmt *> { 
         auto v = a;
@@ -5611,12 +5719,12 @@ std::optional<std::vector<Stmt *>> Parser::r_for_if_clause_async() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v640 = tokOpt(expectKeyword("async"));
-      if (!_v640) break;
+      auto _v654 = tokOpt(expectKeyword("async"));
+      if (!_v654) break;
       if (!sp()) break;
-      auto _v641 = r_for_if_clause();
-      if (!_v641) break;
-      auto &c = *_v641;
+      auto _v655 = r_for_if_clause();
+      if (!_v655) break;
+      auto &c = *_v655;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<Stmt *>>([&]() -> std::vector<Stmt *> { 
         auto s = c;
@@ -5632,9 +5740,9 @@ std::optional<std::vector<Stmt *>> Parser::r_for_if_clause_async() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v642 = r_for_if_clause();
-      if (!_v642) break;
-      return std::optional<std::vector<Stmt *>>(*_v642);
+      auto _v656 = r_for_if_clause();
+      if (!_v656) break;
+      return std::optional<std::vector<Stmt *>>(*_v656);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5646,29 +5754,29 @@ std::optional<std::vector<Stmt *>> Parser::r_for_if_clause() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v643 = tokOpt(expectKeyword("for"));
-      if (!_v643) break;
+      auto _v657 = tokOpt(expectKeyword("for"));
+      if (!_v657) break;
       if (!sp()) break;
-      auto _v644 = r_star_targets();
-      if (!_v644) break;
-      auto &t = *_v644;
+      auto _v658 = r_star_targets();
+      if (!_v658) break;
+      auto &t = *_v658;
       if (!sp()) break;
-      auto _v645 = tokOpt(expectKeyword("in"));
-      if (!_v645) break;
+      auto _v659 = tokOpt(expectKeyword("in"));
+      if (!_v659) break;
       if (!sp()) break;
-      auto _v646 = r_disjunction();
-      if (!_v646) break;
-      auto &e = *_v646;
-      auto _g648 = [&]() -> std::optional<Expr *> {
+      auto _v660 = r_disjunction();
+      if (!_v660) break;
+      auto &e = *_v660;
+      auto _g662 = [&]() -> std::optional<Expr *> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v649 = tokOpt(expectKeyword("if"));
-            if (!_v649) break;
-            auto _v650 = r_disjunction();
-            if (!_v650) break;
-            auto &x = *_v650;
+            auto _v663 = tokOpt(expectKeyword("if"));
+            if (!_v663) break;
+            auto _v664 = r_disjunction();
+            if (!_v664) break;
+            auto &x = *_v664;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<Expr *>(x);
           } while (false);
@@ -5677,14 +5785,14 @@ std::optional<std::vector<Stmt *>> Parser::r_for_if_clause() {
         }
         return std::nullopt;
       };
-      std::vector<Expr *> _v647;
+      std::vector<Expr *> _v661;
       while (true) {
         size_t _q = pos;
-        auto _e = _g648();
+        auto _e = _g662();
         if (!_e) { pos = _q; break; }
-        _v647.push_back(std::move(*_e));
+        _v661.push_back(std::move(*_e));
       }
-      auto &ifs = _v647;
+      auto &ifs = _v661;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<Stmt *>>([&]() -> std::vector<Stmt *> { 
         std::vector<Stmt *> v{asts(For, LOC, t, e, nullptr)};
@@ -5709,21 +5817,21 @@ std::optional<Expr *> Parser::r_star_targets() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        std::vector<Expr *> _v651;
+        std::vector<Expr *> _v665;
         if (auto _e = r_star_target()) {
-          _v651.push_back(std::move(*_e));
+          _v665.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_star_target();
             if (!_f) { pos = _q; break; }
-            _v651.push_back(std::move(*_f));
+            _v665.push_back(std::move(*_f));
           }
         }
-        if (_v651.empty()) break;
-        auto &xs = _v651;
-        auto _v652 = tokOpt(expectOp(","));
-        auto &c = _v652;
+        if (_v665.empty()) break;
+        auto &xs = _v665;
+        auto _v666 = tokOpt(expectOp(","));
+        auto &c = _v666;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
       } while (false);
@@ -5740,15 +5848,15 @@ std::optional<Expr *> Parser::r_star_target() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v653 = tokOpt(expectOp("*"));
-      if (!_v653) break;
-      size_t _p654 = pos;
-      bool _p654_ok = bool(expectOp("*"));
-      pos = _p654;
-      if (_p654_ok) break;
-      auto _v655 = r_star_target();
-      if (!_v655) break;
-      auto &t = *_v655;
+      auto _v667 = tokOpt(expectOp("*"));
+      if (!_v667) break;
+      size_t _p668 = pos;
+      bool _p668_ok = bool(expectOp("*"));
+      pos = _p668;
+      if (_p668_ok) break;
+      auto _v669 = r_star_target();
+      if (!_v669) break;
+      auto &t = *_v669;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Star, LOC, t));
     } while (false);
@@ -5759,9 +5867,9 @@ std::optional<Expr *> Parser::r_star_target() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v656 = r_star_parens();
-      if (!_v656) break;
-      return std::optional<Expr *>(*_v656);
+      auto _v670 = r_star_parens();
+      if (!_v670) break;
+      return std::optional<Expr *>(*_v670);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5770,9 +5878,9 @@ std::optional<Expr *> Parser::r_star_target() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v657 = r_primary();
-      if (!_v657) break;
-      return std::optional<Expr *>(*_v657);
+      auto _v671 = r_primary();
+      if (!_v671) break;
+      return std::optional<Expr *>(*_v671);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5784,25 +5892,25 @@ std::optional<Expr *> Parser::r_star_parens() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v658 = tokOpt(expectOp("("));
-      if (!_v658) break;
-      std::vector<Expr *> _v659;
+      auto _v672 = tokOpt(expectOp("("));
+      if (!_v672) break;
+      std::vector<Expr *> _v673;
       if (auto _e = r_star_target()) {
-        _v659.push_back(std::move(*_e));
+        _v673.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_star_target();
           if (!_f) { pos = _q; break; }
-          _v659.push_back(std::move(*_f));
+          _v673.push_back(std::move(*_f));
         }
       }
-      if (_v659.empty()) break;
-      auto &xs = _v659;
-      auto _v660 = tokOpt(expectOp(","));
-      auto &c = _v660;
-      auto _v661 = tokOpt(expectOp(")"));
-      if (!_v661) break;
+      if (_v673.empty()) break;
+      auto &xs = _v673;
+      auto _v674 = tokOpt(expectOp(","));
+      auto &c = _v674;
+      auto _v675 = tokOpt(expectOp(")"));
+      if (!_v675) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
     } while (false);
@@ -5813,25 +5921,25 @@ std::optional<Expr *> Parser::r_star_parens() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v662 = tokOpt(expectOp("["));
-      if (!_v662) break;
-      std::vector<Expr *> _v663;
+      auto _v676 = tokOpt(expectOp("["));
+      if (!_v676) break;
+      std::vector<Expr *> _v677;
       if (auto _e = r_star_target()) {
-        _v663.push_back(std::move(*_e));
+        _v677.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_star_target();
           if (!_f) { pos = _q; break; }
-          _v663.push_back(std::move(*_f));
+          _v677.push_back(std::move(*_f));
         }
       }
-      if (_v663.empty()) break;
-      auto &xs = _v663;
-      auto _v664 = tokOpt(expectOp(","));
-      auto &c = _v664;
-      auto _v665 = tokOpt(expectOp("]"));
-      if (!_v665) break;
+      if (_v677.empty()) break;
+      auto &xs = _v677;
+      auto _v678 = tokOpt(expectOp(","));
+      auto &c = _v678;
+      auto _v679 = tokOpt(expectOp("]"));
+      if (!_v679) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
     } while (false);
@@ -5852,21 +5960,21 @@ std::optional<Expr *> Parser::r_star_expressions() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        std::vector<Expr *> _v666;
+        std::vector<Expr *> _v680;
         if (auto _e = r_star_expression()) {
-          _v666.push_back(std::move(*_e));
+          _v680.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_star_expression();
             if (!_f) { pos = _q; break; }
-            _v666.push_back(std::move(*_f));
+            _v680.push_back(std::move(*_f));
           }
         }
-        if (_v666.empty()) break;
-        auto &xs = _v666;
-        auto _v667 = tokOpt(expectOp(","));
-        auto &c = _v667;
+        if (_v680.empty()) break;
+        auto &xs = _v680;
+        auto _v681 = tokOpt(expectOp(","));
+        auto &c = _v681;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(wrapTuple(CTX, xs, c.has_value(), LOC));
       } while (false);
@@ -5883,11 +5991,11 @@ std::optional<Expr *> Parser::r_star_expression() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v668 = tokOpt(expectOp("*"));
-      if (!_v668) break;
-      auto _v669 = r_bitwise_or();
-      if (!_v669) break;
-      auto &b = *_v669;
+      auto _v682 = tokOpt(expectOp("*"));
+      if (!_v682) break;
+      auto _v683 = r_bitwise_or();
+      if (!_v683) break;
+      auto &b = *_v683;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Star, LOC, b));
     } while (false);
@@ -5898,9 +6006,9 @@ std::optional<Expr *> Parser::r_star_expression() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v670 = r_expression();
-      if (!_v670) break;
-      return std::optional<Expr *>(*_v670);
+      auto _v684 = r_expression();
+      if (!_v684) break;
+      return std::optional<Expr *>(*_v684);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -5919,11 +6027,11 @@ std::optional<Expr *> Parser::r_star_named_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v671 = tokOpt(expectOp("*"));
-        if (!_v671) break;
-        auto _v672 = r_bitwise_or();
-        if (!_v672) break;
-        auto &b = *_v672;
+        auto _v685 = tokOpt(expectOp("*"));
+        if (!_v685) break;
+        auto _v686 = r_bitwise_or();
+        if (!_v686) break;
+        auto &b = *_v686;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(Star, LOC, b));
       } while (false);
@@ -5934,9 +6042,9 @@ std::optional<Expr *> Parser::r_star_named_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v673 = r_named_expression();
-        if (!_v673) break;
-        return std::optional<Expr *>(*_v673);
+        auto _v687 = r_named_expression();
+        if (!_v687) break;
+        return std::optional<Expr *>(*_v687);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -5958,15 +6066,15 @@ std::optional<Expr *> Parser::r_named_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v674 = r_name();
-        if (!_v674) break;
-        auto &n = *_v674;
-        auto _v675 = tokOpt(expectOp(":="));
-        if (!_v675) break;
+        auto _v688 = r_name();
+        if (!_v688) break;
+        auto &n = *_v688;
+        auto _v689 = tokOpt(expectOp(":="));
+        if (!_v689) break;
         _cut = true;
-        auto _v676 = r_expression();
-        if (!_v676) break;
-        auto &e = *_v676;
+        auto _v690 = r_expression();
+        if (!_v690) break;
+        auto &e = *_v690;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(Assign, LOC, aste(Id, LOC, n), e));
       } while (false);
@@ -5977,13 +6085,13 @@ std::optional<Expr *> Parser::r_named_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v677 = r_expression();
-        if (!_v677) break;
-        auto &e = *_v677;
-        size_t _p678 = pos;
-        bool _p678_ok = bool(expectOp(":="));
-        pos = _p678;
-        if (_p678_ok) break;
+        auto _v691 = r_expression();
+        if (!_v691) break;
+        auto &e = *_v691;
+        size_t _p692 = pos;
+        bool _p692_ok = bool(expectOp(":="));
+        pos = _p692;
+        if (_p692_ok) break;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(e);
       } while (false);
@@ -6000,27 +6108,27 @@ std::optional<std::vector<CallArg>> Parser::r_arguments() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v679 = tokOpt(expectOp("("));
-      if (!_v679) break;
-      auto _g681 = [&]() -> std::optional<std::vector<std::vector<CallArg>>> {
+      auto _v693 = tokOpt(expectOp("("));
+      if (!_v693) break;
+      auto _g695 = [&]() -> std::optional<std::vector<std::vector<CallArg>>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            std::vector<std::vector<CallArg>> _v682;
+            std::vector<std::vector<CallArg>> _v696;
             if (auto _e = r_args()) {
-              _v682.push_back(std::move(*_e));
+              _v696.push_back(std::move(*_e));
               while (true) {
                 size_t _q = pos;
                 if (!expectOp(",")) { pos = _q; break; }
                 auto _f = r_args();
                 if (!_f) { pos = _q; break; }
-                _v682.push_back(std::move(*_f));
+                _v696.push_back(std::move(*_f));
               }
             }
-            if (_v682.empty()) break;
-            auto &x = _v682;
-            auto _v683 = tokOpt(expectOp(","));
+            if (_v696.empty()) break;
+            auto &x = _v696;
+            auto _v697 = tokOpt(expectOp(","));
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<std::vector<CallArg>>>(x);
           } while (false);
@@ -6029,10 +6137,10 @@ std::optional<std::vector<CallArg>> Parser::r_arguments() {
         }
         return std::nullopt;
       };
-      auto _v680 = _g681();
-      auto &as = _v680;
-      auto _v684 = tokOpt(expectOp(")"));
-      if (!_v684) break;
+      auto _v694 = _g695();
+      auto &as = _v694;
+      auto _v698 = tokOpt(expectOp(")"));
+      if (!_v698) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<CallArg>>([&]() -> std::vector<CallArg> { 
         std::vector<CallArg> result;
@@ -6059,19 +6167,19 @@ std::optional<std::vector<CallArg>> Parser::r_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v685 = r_simple_args();
-      if (!_v685) break;
-      auto &a = *_v685;
-      auto _g687 = [&]() -> std::optional<std::vector<CallArg>> {
+      auto _v699 = r_simple_args();
+      if (!_v699) break;
+      auto &a = *_v699;
+      auto _g701 = [&]() -> std::optional<std::vector<CallArg>> {
         {
           size_t _start = pos;
           bool _cut = false;
           do {
-            auto _v688 = tokOpt(expectOp(","));
-            if (!_v688) break;
-            auto _v689 = r_kwargs();
-            if (!_v689) break;
-            auto &x = *_v689;
+            auto _v702 = tokOpt(expectOp(","));
+            if (!_v702) break;
+            auto _v703 = r_kwargs();
+            if (!_v703) break;
+            auto &x = *_v703;
             [[maybe_unused]] auto LOC = loc(_start);
             return std::optional<std::vector<CallArg>>(x);
           } while (false);
@@ -6080,8 +6188,8 @@ std::optional<std::vector<CallArg>> Parser::r_args() {
         }
         return std::nullopt;
       };
-      auto _v686 = _g687();
-      auto &k = _v686;
+      auto _v700 = _g701();
+      auto &k = _v700;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<CallArg>>([&]() -> std::vector<CallArg> { 
         auto v = a;
@@ -6096,9 +6204,9 @@ std::optional<std::vector<CallArg>> Parser::r_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v690 = r_kwargs();
-      if (!_v690) break;
-      return std::optional<std::vector<CallArg>>(*_v690);
+      auto _v704 = r_kwargs();
+      if (!_v704) break;
+      return std::optional<std::vector<CallArg>>(*_v704);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -6110,9 +6218,9 @@ std::optional<Expr *> Parser::r_simple_arg() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v691 = r_starred_expression();
-      if (!_v691) break;
-      return std::optional<Expr *>(*_v691);
+      auto _v705 = r_starred_expression();
+      if (!_v705) break;
+      return std::optional<Expr *>(*_v705);
     } while (false);
     pos = _start;
     if (_cut) return std::nullopt;
@@ -6121,13 +6229,13 @@ std::optional<Expr *> Parser::r_simple_arg() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v692 = r_named_expression();
-      if (!_v692) break;
-      auto &e = *_v692;
-      size_t _p693 = pos;
-      bool _p693_ok = bool(expectOp("="));
-      pos = _p693;
-      if (_p693_ok) break;
+      auto _v706 = r_named_expression();
+      if (!_v706) break;
+      auto &e = *_v706;
+      size_t _p707 = pos;
+      bool _p707_ok = bool(expectOp("="));
+      pos = _p707;
+      if (_p707_ok) break;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(e);
     } while (false);
@@ -6141,19 +6249,19 @@ std::optional<std::vector<CallArg>> Parser::r_simple_args() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      std::vector<Expr *> _v694;
+      std::vector<Expr *> _v708;
       if (auto _e = r_simple_arg()) {
-        _v694.push_back(std::move(*_e));
+        _v708.push_back(std::move(*_e));
         while (true) {
           size_t _q = pos;
           if (!expectOp(",")) { pos = _q; break; }
           auto _f = r_simple_arg();
           if (!_f) { pos = _q; break; }
-          _v694.push_back(std::move(*_f));
+          _v708.push_back(std::move(*_f));
         }
       }
-      if (_v694.empty()) break;
-      auto &xs = _v694;
+      if (_v708.empty()) break;
+      auto &xs = _v708;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::vector<CallArg>>([&]() -> std::vector<CallArg> { 
         std::vector<CallArg> v;
@@ -6178,11 +6286,11 @@ std::optional<Expr *> Parser::r_starred_expression() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v695 = tokOpt(expectOp("*"));
-        if (!_v695) break;
-        auto _v696 = r_expression();
-        if (!_v696) break;
-        auto &e = *_v696;
+        auto _v709 = tokOpt(expectOp("*"));
+        if (!_v709) break;
+        auto _v710 = r_expression();
+        if (!_v710) break;
+        auto &e = *_v710;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<Expr *>(aste(Star, LOC, e));
       } while (false);
@@ -6206,34 +6314,34 @@ std::optional<std::vector<CallArg>> Parser::r_kwargs() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        std::vector<CallArg> _v697;
+        std::vector<CallArg> _v711;
         if (auto _e = r_kwarg_or_starred()) {
-          _v697.push_back(std::move(*_e));
+          _v711.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_kwarg_or_starred();
             if (!_f) { pos = _q; break; }
-            _v697.push_back(std::move(*_f));
+            _v711.push_back(std::move(*_f));
           }
         }
-        if (_v697.empty()) break;
-        auto &a = _v697;
-        auto _v698 = tokOpt(expectOp(","));
-        if (!_v698) break;
-        std::vector<CallArg> _v699;
+        if (_v711.empty()) break;
+        auto &a = _v711;
+        auto _v712 = tokOpt(expectOp(","));
+        if (!_v712) break;
+        std::vector<CallArg> _v713;
         if (auto _e = r_kwarg_or_double_starred()) {
-          _v699.push_back(std::move(*_e));
+          _v713.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_kwarg_or_double_starred();
             if (!_f) { pos = _q; break; }
-            _v699.push_back(std::move(*_f));
+            _v713.push_back(std::move(*_f));
           }
         }
-        if (_v699.empty()) break;
-        auto &b = _v699;
+        if (_v713.empty()) break;
+        auto &b = _v713;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<std::vector<CallArg>>([&]() -> std::vector<CallArg> { 
         auto v = a;
@@ -6248,19 +6356,19 @@ std::optional<std::vector<CallArg>> Parser::r_kwargs() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        std::vector<CallArg> _v700;
+        std::vector<CallArg> _v714;
         if (auto _e = r_kwarg_or_starred()) {
-          _v700.push_back(std::move(*_e));
+          _v714.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_kwarg_or_starred();
             if (!_f) { pos = _q; break; }
-            _v700.push_back(std::move(*_f));
+            _v714.push_back(std::move(*_f));
           }
         }
-        if (_v700.empty()) break;
-        return std::optional<std::vector<CallArg>>(_v700);
+        if (_v714.empty()) break;
+        return std::optional<std::vector<CallArg>>(_v714);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -6269,19 +6377,19 @@ std::optional<std::vector<CallArg>> Parser::r_kwargs() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        std::vector<CallArg> _v701;
+        std::vector<CallArg> _v715;
         if (auto _e = r_kwarg_or_double_starred()) {
-          _v701.push_back(std::move(*_e));
+          _v715.push_back(std::move(*_e));
           while (true) {
             size_t _q = pos;
             if (!expectOp(",")) { pos = _q; break; }
             auto _f = r_kwarg_or_double_starred();
             if (!_f) { pos = _q; break; }
-            _v701.push_back(std::move(*_f));
+            _v715.push_back(std::move(*_f));
           }
         }
-        if (_v701.empty()) break;
-        return std::optional<std::vector<CallArg>>(_v701);
+        if (_v715.empty()) break;
+        return std::optional<std::vector<CallArg>>(_v715);
       } while (false);
       pos = _start;
       if (_cut) return std::nullopt;
@@ -6303,14 +6411,14 @@ std::optional<CallArg> Parser::r_kwarg_or_starred() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v702 = r_name();
-        if (!_v702) break;
-        auto &n = *_v702;
-        auto _v703 = tokOpt(expectOp("="));
-        if (!_v703) break;
-        auto _v704 = r_expression();
-        if (!_v704) break;
-        auto &e = *_v704;
+        auto _v716 = r_name();
+        if (!_v716) break;
+        auto &n = *_v716;
+        auto _v717 = tokOpt(expectOp("="));
+        if (!_v717) break;
+        auto _v718 = r_expression();
+        if (!_v718) break;
+        auto &e = *_v718;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<CallArg>(CallArg(LOC, n, e));
       } while (false);
@@ -6321,9 +6429,9 @@ std::optional<CallArg> Parser::r_kwarg_or_starred() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v705 = r_starred_expression();
-        if (!_v705) break;
-        auto &s = *_v705;
+        auto _v719 = r_starred_expression();
+        if (!_v719) break;
+        auto &s = *_v719;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<CallArg>(CallArg(s));
       } while (false);
@@ -6347,14 +6455,14 @@ std::optional<CallArg> Parser::r_kwarg_or_double_starred() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v706 = r_name();
-        if (!_v706) break;
-        auto &n = *_v706;
-        auto _v707 = tokOpt(expectOp("="));
-        if (!_v707) break;
-        auto _v708 = r_expression();
-        if (!_v708) break;
-        auto &e = *_v708;
+        auto _v720 = r_name();
+        if (!_v720) break;
+        auto &n = *_v720;
+        auto _v721 = tokOpt(expectOp("="));
+        if (!_v721) break;
+        auto _v722 = r_expression();
+        if (!_v722) break;
+        auto &e = *_v722;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<CallArg>(CallArg(LOC, n, e));
       } while (false);
@@ -6365,11 +6473,11 @@ std::optional<CallArg> Parser::r_kwarg_or_double_starred() {
       size_t _start = pos;
       bool _cut = false;
       do {
-        auto _v709 = tokOpt(expectOp("**"));
-        if (!_v709) break;
-        auto _v710 = r_expression();
-        if (!_v710) break;
-        auto &e = *_v710;
+        auto _v723 = tokOpt(expectOp("**"));
+        if (!_v723) break;
+        auto _v724 = r_expression();
+        if (!_v724) break;
+        auto &e = *_v724;
         [[maybe_unused]] auto LOC = loc(_start);
         return std::optional<CallArg>(CallArg(aste(KeywordStar, LOC, e)));
       } while (false);
@@ -6386,9 +6494,9 @@ std::optional<Expr *> Parser::r_id() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v711 = r_name();
-      if (!_v711) break;
-      auto &n = *_v711;
+      auto _v725 = r_name();
+      if (!_v725) break;
+      auto &n = *_v725;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<Expr *>(aste(Id, LOC, n));
     } while (false);
@@ -6402,9 +6510,9 @@ std::optional<std::string> Parser::r_name() {
     size_t _start = pos;
     bool _cut = false;
     do {
-      auto _v712 = tokOpt(expectName());
-      if (!_v712) break;
-      auto &t = *_v712;
+      auto _v726 = tokOpt(expectName());
+      if (!_v726) break;
+      auto &t = *_v726;
       [[maybe_unused]] auto LOC = loc(_start);
       return std::optional<std::string>(str(t));
     } while (false);
