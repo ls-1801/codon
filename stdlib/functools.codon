@@ -11,6 +11,11 @@ def partial():  # internal
 def total_ordering(cls):
     return cls
 
+# `@cached_property` on a method is read at compile time as `@property` (computed at every access); this function is
+# only the name that the import binds.
+def cached_property(func):
+    return func
+
 def reduce(function, iterable):
     it = iter(iterable)
     if it.done():

@@ -582,6 +582,12 @@ void ScopingVisitor::visit(FunctionStmt *stmt) {
       stmt->setAttribute(Attr::Atomic);
     } else if (isId(d, "property")) {
       stmt->setAttribute(Attr::Property);
+    } else if (isId(d, "cached_property") ||
+               (cast<DotExpr>(d) && cast<DotExpr>(d)->getMember() == "cached_property" &&
+                isId(cast<DotExpr>(d)->getExpr(), "functools"))) {
+      // NES: functools.cached_property is a property that is computed again at every access: compiled objects have no
+      // __dict__ to keep the value. The result is the same for a method that only computes from the object's fields.
+      stmt->setAttribute(Attr::Property);
     } else if (isId(d, "staticmethod")) {
       stmt->setAttribute(Attr::StaticMethod);
     } else if (isId(d, "classmethod")) {
