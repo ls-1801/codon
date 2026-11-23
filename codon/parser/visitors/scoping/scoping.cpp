@@ -600,6 +600,20 @@ void ScopingVisitor::visit(FunctionStmt *stmt) {
       stmt->setAttribute(Attr::Atomic);
     } else if (isId(d, "property")) {
       stmt->setAttribute(Attr::Property);
+    } else if ([&]() {
+                 // NES: functools.cache and functools.lru_cache (with or without arguments) are no-ops for compiled
+                 // UDFs (see stdlib functools); dropping them here keeps the decorator from realizing the function
+                 // when the class or module is defined, as Python does not run the body then either.
+                 auto e = d;
+                 if (auto c = cast<CallExpr>(e))
+                   e = c->getExpr();
+                 if (isId(e, "lru_cache") || isId(e, "cache"))
+                   return true;
+                 auto dot = cast<DotExpr>(e);
+                 return dot && (dot->getMember() == "lru_cache" || dot->getMember() == "cache") &&
+                        isId(dot->getExpr(), "functools");
+               }()) {
+      // dropped
     } else if (isId(d, "cached_property") ||
                (cast<DotExpr>(d) && cast<DotExpr>(d)->getMember() == "cached_property" &&
                 isId(cast<DotExpr>(d)->getExpr(), "functools"))) {
