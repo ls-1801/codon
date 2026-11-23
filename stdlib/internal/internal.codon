@@ -212,7 +212,17 @@ class __magic__:
                 n[i] = ""
             else:
                 n[i] = k
-        return Tuple._str(a.ptr, n.ptr, l)
+        if isinstance(slf, Tuple):
+            return Tuple._str(a.ptr, n.ptr, l)
+        # NES: as Python's namedtuple and dataclass: `Name(x=1, y='a')`, not `(x: 1, y: 'a')`.
+        parts = List[str](l)
+        for i in range(l):
+            parts.append(n[i] + "=" + a[i])
+        name = slf.__class__.__name__
+        bracket = name.find("[")
+        if bracket >= 0:
+            name = name[:bracket]
+        return name + "(" + ", ".join(parts) + ")"
 
     # @dataclass parameter: repr=False
     def repr_default(slf) -> str:

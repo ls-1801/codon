@@ -20,6 +20,77 @@ using namespace matcher;
 
 /// Parse a class (type) declaration and add a (generic) type to the context.
 void TypecheckVisitor::visit(ClassStmt *stmt) {
+  // NES: a class with a tuple class among its bases (e.g. a namedtuple) and only field-less classes otherwise (mixins
+  // with methods and properties, `object`) becomes a tuple class itself, inheriting statically: Python code such as
+  // `class SplitResult(_SplitResultBase, _NetlocResultMixinStr)` in urllib.parse. A reference class cannot inherit a
+  // tuple class, and scoping decides tuple-ness from decorators only, before the bases are known.
+  if (!stmt->hasAttribute(Attr::Tuple) && !stmt->hasAttribute(Attr::Extend) &&
+      !stmt->getBaseClasses().empty()) {
+    bool tupleBase = false, fieldless = true;
+    std::vector<size_t> baseGenerics; // the number of unbound generics of each base
+    for (auto *base : stmt->getBaseClasses()) {
+      auto t = transformType(clone(base), true);
+      auto ct = t ? extractClassType(t) : nullptr;
+      auto c = ct ? getClass(ct) : nullptr;
+      if (!c || !c->ast) {
+        fieldless = false;
+        break;
+      }
+      size_t unbound = 0;
+      if (!cast<IndexExpr>(base))
+        for (auto &g : ct->generics)
+          unbound += g.getType()->getUnbound() != nullptr;
+      baseGenerics.push_back(unbound);
+      if (c->ast->hasAttribute(Attr::Tuple))
+        tupleBase = true;
+      else if (!c->fields.empty())
+        fieldless = false;
+    }
+    if (tupleBase && fieldless) {
+      stmt->setAttribute(Attr::Tuple);
+      auto magics = std::make_unique<ir::StringListAttribute>();
+      magics->values = {"new",      "repr",    "hash",    "eq",       "ne",       "lt",
+                        "le",       "gt",      "ge",      "pickle",   "unpickle", "to_py",
+                        "from_py",  "iter",    "getitem", "len",      "to_gpu",   "from_gpu",
+                        "from_gpu_new", "tuplesize", "dict"};
+      stmt->setAttribute(Attr::ClassMagic, std::move(magics));
+      if (stmt->hasAttribute(Attr::ClassDeduce))
+        stmt->eraseAttribute(Attr::ClassDeduce);
+      // A generic tuple base (an untyped namedtuple is generic over its fields) gives its fields to this class, typed
+      // by new generics of this class, so that the constructor infers them: `class R(B)` with `B = namedtuple("B",
+      // "x y")` becomes `class R[G1, G2]: x: G1; y: G2` plus the other bases' static members. Inheriting `B[G1, G2]`
+      // statically copies the fields typed by B's own generics, which the tuple magics then cannot realize.
+      size_t gi = 0;
+      std::vector<Param> baseFields;
+      for (size_t bi = 0; bi < stmt->baseClasses.size(); bi++) {
+        auto *base = stmt->baseClasses[bi];
+        if (bi < baseGenerics.size() && baseGenerics[bi] > 0) {
+          auto ct = extractClassType(transformType(clone(base), true));
+          auto bast = getClass(ct)->ast;
+          std::unordered_map<std::string, std::string> rename;
+          for (auto &a : *bast)
+            if (a.isGeneric())
+              rename[a.getName()] = fmt::format("__nes_G{}", ++gi);
+          for (auto &a : *bast) {
+            if (!a.isValue() || ClassStmt::isClassVar(a))
+              continue;
+            Expr *type = clean_clone(a.getType());
+            if (auto id = cast<IdExpr>(type); id && rename.contains(id->getValue()))
+              type = N<IdExpr>(rename[id->getValue()]);
+            baseFields.emplace_back(a.getName(), type, clean_clone(a.getDefault()));
+          }
+          for (auto &a : *bast)
+            if (a.isGeneric())
+              baseFields.emplace_back(rename[a.getName()], N<IdExpr>(TYPE_TYPE), nullptr, Param::Generic);
+          continue;
+        }
+        stmt->staticBaseClasses.push_back(base);
+      }
+      stmt->items.insert(stmt->items.begin(), baseFields.begin(), baseFields.end());
+      stmt->baseClasses.clear();
+    }
+  }
+
   // Get root name
   std::string name = stmt->getName();
 
