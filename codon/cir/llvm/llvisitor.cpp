@@ -2637,7 +2637,9 @@ void LLVMVisitor::visit(const ForFlow *x) {
   process(x->getIter());
   auto *iter = value;
   B->SetInsertPoint(block);
-  B->CreateBr(condBlock);
+  // A generator that an earlier loop exhausted is at its final suspend point, where resuming it is undefined (its
+  // resume function is null): such a loop runs no iteration, as in Python.
+  B->CreateCondBr(B->CreateCall(coroDone, iter), exitBlock, condBlock);
 
   block = condBlock;
   call(coroResume, {iter});
@@ -3160,7 +3162,8 @@ void LLVMVisitor::codegenPipeline(
 
     auto *iter = value;
     B->SetInsertPoint(block);
-    B->CreateBr(condBlock);
+    // As in ForFlow: an exhausted generator is not resumed again.
+    B->CreateCondBr(B->CreateCall(coroDone, iter), exitBlock, condBlock);
 
     block = condBlock;
     call(coroResume, {iter});

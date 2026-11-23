@@ -15,6 +15,9 @@ class Generator:
         pass
 
     def done(self) -> bool:
+        # NES: an exhausted generator stays done; resuming it at its final suspend point is undefined.
+        if self.__done__():
+            return True
         self.__resume__()
         return self.__done__()
 
