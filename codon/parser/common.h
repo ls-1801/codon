@@ -180,6 +180,10 @@ public:
   /// Whether a module found in a search path (ImportFile::STDLIB) is library code (the standard library or a plugin), as
   /// opposed to user code. By default it is; a filesystem with user modules in its search paths can tell them apart.
   virtual bool is_library(const path_t &) const { return true; }
+  /// Whether an import in the file at the given path may find a module next to that file before the search paths (an
+  /// implicit relative import). Python 3 has none; Codon allows them, except where the filesystem says otherwise, e.g.
+  /// for CPython's own library on a search path, whose `import re` must find Codon's re.
+  virtual bool implicit_relative_imports(const path_t &) const { return true; }
 
   virtual path_t get_module0() const { return ""; }
   virtual void set_module0(const std::string &) {}
@@ -227,7 +231,8 @@ public:
 /// standard library.
 std::shared_ptr<ImportFile> getImportFile(Cache *cache, const std::string &what,
                                           const std::string &relativeTo,
-                                          bool forceStdlib = false);
+                                          bool forceStdlib = false,
+                                          bool explicitRelative = false);
 
 template <typename T> class SetInScope {
   T *t;

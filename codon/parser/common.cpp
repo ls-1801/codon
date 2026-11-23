@@ -355,12 +355,12 @@ std::string Filesystem::get_absolute_path(const std::string &path) {
 
 std::shared_ptr<ImportFile> getImportFile(Cache *cache, const std::string &what,
                                           const std::string &relativeTo,
-                                          bool forceStdlib) {
+                                          bool forceStdlib, bool explicitRelative) {
   auto fs = cache->fs.get();
   std::vector<std::string> paths;
   auto parentRelativeTo = IFilesystem::path_t(relativeTo).parent_path();
   if (what != "<jit>") {
-    if (!forceStdlib) {
+    if (!forceStdlib && (explicitRelative || fs->implicit_relative_imports(relativeTo))) {
       auto path = parentRelativeTo / what;
       path.replace_extension("codon");
       if (fs->exists(path))

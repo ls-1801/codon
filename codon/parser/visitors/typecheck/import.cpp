@@ -34,7 +34,7 @@ void TypecheckVisitor::visit(ImportStmt *stmt) {
   // Fetch the import
   auto components = getImportPath(stmt->getFrom(), stmt->getDots());
   auto path = combine2(components, "/");
-  auto file = getImportFile(ctx->cache, path, ctx->getFilename());
+  auto file = getImportFile(ctx->cache, path, ctx->getFilename(), false, stmt->getDots() > 0);
   if (!file) {
     if (stmt->getDots() == 0 && ctx->autoPython) {
       auto newStr = FormatVisitor::apply(stmt->getFrom());
