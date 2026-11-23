@@ -520,6 +520,10 @@ std::vector<TypePtr> TypecheckVisitor::parseBaseClasses(
 /// @return the transformed init and the pointer to the original function.
 bool TypecheckVisitor::autoDeduceMembers(ClassStmt *stmt, std::vector<Param> &args) {
   std::set<std::string> members;
+  // NES: a member assigned from an annotated parameter of __init__ (`def __init__(self, d: D): self.d = d`) gets the
+  // annotation as its type, not a generic: with generics, the class could not be named in annotations (`x: Foo`) or as
+  // a base class, as its generics stayed unbound.
+  std::map<std::string, Expr *> annotated;
   for (const auto &sp : getClassMethods(stmt->suite))
     if (auto f = cast<FunctionStmt>(sp)) {
       if (f->name == "__init__")
@@ -527,6 +531,24 @@ bool TypecheckVisitor::autoDeduceMembers(ClassStmt *stmt, std::vector<Param> &ar
                 f->getAttribute<ir::StringListAttribute>(Attr::ClassDeduce)) {
           for (const auto &m : b->values)
             members.insert(m);
+          std::map<std::string, Expr *> paramTypes;
+          for (auto &a : *f)
+            if (a.getType() && a.isValue() && !startswith(a.getName(), "*"))
+              paramTypes[a.getName()] = a.getType();
+          std::function<void(Stmt *)> scan = [&](Stmt *st) {
+            if (auto suite = cast<SuiteStmt>(st)) {
+              for (auto *s : *suite)
+                scan(s);
+            } else if (auto a = cast<AssignStmt>(st)) {
+              auto dot = cast<DotExpr>(a->getLhs());
+              auto rhs = cast<IdExpr>(a->getRhs());
+              if (dot && rhs && cast<IdExpr>(dot->getExpr()) &&
+                  cast<IdExpr>(dot->getExpr())->getValue() == "self")
+                if (auto t = in(paramTypes, rhs->getValue()))
+                  annotated.emplace(dot->getMember(), *t);
+            }
+          };
+          scan(f->getSuite());
         }
     }
   if (!members.empty()) {
@@ -534,6 +556,10 @@ bool TypecheckVisitor::autoDeduceMembers(ClassStmt *stmt, std::vector<Param> &ar
     if (auto aa = stmt->getAttribute<ir::StringListAttribute>(Attr::ClassMagic))
       std::erase(aa->values, "init");
     for (auto m : members) {
+      if (auto t = in(annotated, m)) {
+        args.emplace_back(m, clone(*t));
+        continue;
+      }
       auto genericName = fmt::format("T_{}", m);
       args.emplace_back(genericName, N<IdExpr>(TYPE_TYPE), N<IdExpr>("NoneType"),
                         Param::Generic);
