@@ -184,6 +184,9 @@ public:
   /// implicit relative import). Python 3 has none; Codon allows them, except where the filesystem says otherwise, e.g.
   /// for CPython's own library on a search path, whose `import re` must find Codon's re.
   virtual bool implicit_relative_imports(const path_t &) const { return true; }
+  /// NES: an overlay of the module at the given path, or an empty path: a source file whose top-level definitions
+  /// replace those of the same name in the module (see TypecheckVisitor::transformNewImport).
+  virtual path_t overlay_for(const path_t &) const { return ""; }
 
   virtual path_t get_module0() const { return ""; }
   virtual void set_module0(const std::string &) {}

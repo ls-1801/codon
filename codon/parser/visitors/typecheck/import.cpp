@@ -380,6 +380,12 @@ Stmt *TypecheckVisitor::transformNewImport(const ImportFile &file) {
   auto nodeOrErr = parseFile(ctx->cache, file.path);
   if (!nodeOrErr)
     throw exc::ParserException(nodeOrErr.takeError());
+  if (auto overlay = ctx->cache->fs->overlay_for(file.path); !overlay.empty()) {
+    auto overlayOrErr = parseFile(ctx->cache, overlay.string());
+    if (!overlayOrErr)
+      throw exc::ParserException(overlayOrErr.takeError());
+    nesMergeOverlay(*nodeOrErr, *overlayOrErr, overlay.string());
+  }
   n = N<SuiteStmt>(n, *nodeOrErr);
   auto tv = TypecheckVisitor(ictx, preamble);
   if (auto err = ScopingVisitor::apply(ctx->cache, n, &ictx->globalShadows))
@@ -418,6 +424,132 @@ Stmt *TypecheckVisitor::transformNewImport(const ImportFile &file) {
     // LOG_USER("[import] done importing {}", file.module);
   }
   return nullptr;
+}
+
+/// NES: merge an overlay into a library module (a last resort for code that does not fit Codon's types, or that is
+/// native in CPython). Top-level statements are matched by the name they bind (def, class, assignment to a name,
+/// import):
+/// - an overlay statement replaces the module's first statement of the same name, in its place, so the order of
+///   module initialization stays;
+/// - `__nes_remove__ = ["a", "b"]` removes the module's statements that bind these names;
+/// - a class decorated with `@__nes_patch__` replaces or adds single members (methods, class variables) of the
+///   module's class of that name;
+/// - other overlay statements are appended.
+void TypecheckVisitor::nesMergeOverlay(Stmt *module, Stmt *overlay, const std::string &overlayPath) {
+  auto bound = [](Stmt *s) -> std::string {
+    if (auto f = cast<FunctionStmt>(s))
+      return f->getName();
+    if (auto c = cast<ClassStmt>(s))
+      return c->getName();
+    if (auto a = cast<AssignStmt>(s))
+      if (auto id = cast<IdExpr>(a->getLhs()))
+        return id->getValue();
+    if (auto im = cast<ImportStmt>(s)) {
+      if (!im->getAs().empty())
+        return im->getAs();
+      if (auto w = cast<IdExpr>(im->getWhat()))
+        return w->getValue() == "*" ? "" : w->getValue();
+      if (!im->getWhat()) {
+        Expr *e = im->getFrom();
+        while (auto d = cast<DotExpr>(e))
+          e = d->getExpr();
+        if (auto id = cast<IdExpr>(e))
+          return id->getValue();
+      }
+    }
+    return "";
+  };
+  std::function<void(Stmt *, const std::function<void(Stmt *&)> &)> each =
+      [&](Stmt *s, const std::function<void(Stmt *&)> &fn) {
+        if (auto suite = cast<SuiteStmt>(s))
+          for (auto &x : *suite) {
+            if (cast<SuiteStmt>(x))
+              each(x, fn);
+            else if (x)
+              fn(x);
+          }
+      };
+
+  std::unordered_set<std::string> remove;
+  std::vector<std::pair<std::string, Stmt *>> defs;
+  std::unordered_set<std::string> patches;
+  each(overlay, [&](Stmt *&x) {
+    auto name = bound(x);
+    if (name == "__nes_remove__") {
+      if (auto l = cast<ListExpr>(cast<AssignStmt>(x)->getRhs()))
+        for (auto *e : *l)
+          if (auto str = cast<StringExpr>(e))
+            remove.insert(str->getValue());
+      return;
+    }
+    if (auto c = cast<ClassStmt>(x)) {
+      std::vector<Expr *> decorators;
+      bool patch = false;
+      for (auto *d : c->getDecorators())
+        if (isId(d, "__nes_patch__"))
+          patch = true;
+        else
+          decorators.push_back(d);
+      if (patch) {
+        c->setDecorators(decorators);
+        patches.insert(name);
+      }
+    }
+    defs.emplace_back(name, x);
+  });
+
+  std::unordered_set<std::string> used;
+  auto findDef = [&](const std::string &name) -> Stmt * {
+    for (auto &[n, s] : defs)
+      if (n == name && !name.empty())
+        return s;
+    return nullptr;
+  };
+  each(module, [&](Stmt *&x) {
+    auto name = bound(x);
+    if (name.empty())
+      return;
+    if (in(remove, name)) {
+      x = N<SuiteStmt>();
+      return;
+    }
+    auto def = findDef(name);
+    if (!def || in(used, name))
+      return;
+    used.insert(name);
+    if (in(patches, name)) {
+      auto orig = cast<ClassStmt>(x);
+      if (!orig)
+        E(Error::CUSTOM, def, "overlay {}: '{}' is not a class in the module", overlayPath, name);
+      // Members of the patch replace or extend those of the module's class.
+      std::vector<Stmt *> added;
+      each(cast<ClassStmt>(def)->getSuite(), [&](Stmt *&m) {
+        auto member = bound(m);
+        bool replaced = false;
+        if (!member.empty())
+          each(orig->getSuite(), [&](Stmt *&o) {
+            if (!replaced && bound(o) == member) {
+              o = m;
+              replaced = true;
+            }
+          });
+        if (!replaced)
+          added.push_back(m);
+      });
+      for (auto *m : added)
+        orig->getSuite()->addStmt(m);
+    } else {
+      x = def;
+    }
+  });
+  auto suite = cast<SuiteStmt>(module);
+  for (auto &[name, s] : defs)
+    if (name.empty() || !in(used, name)) {
+      if (in(patches, name))
+        E(Error::CUSTOM, s, "overlay {}: no class '{}' in the module to patch", overlayPath, name);
+      if (suite)
+        suite->addStmt(s);
+    }
 }
 
 } // namespace codon::ast

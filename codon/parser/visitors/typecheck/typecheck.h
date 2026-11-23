@@ -376,6 +376,7 @@ public:
   Stmt *transformImportFallback(TryStmt *);
   Stmt *nesCopyInheritedReaders(types::ClassType *, const std::vector<std::string> &);
   Stmt *nesCopyAbstractReaders(types::ClassType *);
+  void nesMergeOverlay(Stmt *, Stmt *, const std::string &);
   Expr *transformFunctoolsPartial(CallExpr *);
   Expr *transformSuperF(CallExpr *);
   Expr *transformSuper();
