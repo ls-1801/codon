@@ -308,7 +308,14 @@ types::Type *TypecheckVisitor::realizeType(types::ClassType *type) {
   const auto &mros = getClass(realized)->mro;
   for (size_t i = 1; i < mros.size(); i++) {
     auto mt = instantiateType(mros[i].get(), realized);
-    seqassert(mt->canRealize(), "cannot realize {}", mt->debugString(2));
+    // NES: an error, not an assertion: a base class with inferred fields from unannotated __init__ parameters is
+    // generic, and its generics stay unbound in the subclass.
+    if (!mt->canRealize())
+      E(Error::CUSTOM, getSrcInfo(),
+        "cannot realize the base class '{}' of '{}': annotate the parameters of its __init__ "
+        "(fields inferred from unannotated parameters make it generic)",
+        getUnmangledName(mt->getClass() ? mt->getClass()->name : mt->debugString(1)),
+        getUnmangledName(realized->name));
     realization->bases.push_back(mt);
   }
 
