@@ -1054,6 +1054,17 @@ Expr *TypecheckVisitor::transformBinaryMagic(const BinaryExpr *expr) {
         N<CallExpr>(N<IdExpr>(method->getFuncName()), N<IdExpr>(r), N<IdExpr>(l))));
   }
 
+  // NES: as in Python, `a != b` without __ne__ is `not (a == b)`, and two objects of a reference class without
+  // __eq__ are equal only if they are the same object.
+  if (expr->getOp() == "!=" &&
+      findBestMethod(lt->getClass(), "__eq__", std::vector<Expr *>{expr->getLhs(), expr->getRhs()}))
+    return transform(N<UnaryExpr>("!", N<BinaryExpr>(expr->getLhs(), "==", expr->getRhs())));
+  if ((expr->getOp() == "==" || expr->getOp() == "!=") && lt->getClass() && rt->getClass() &&
+      !lt->getClass()->isRecord() && lt->is(rt->getClass()->name) &&
+      !findMethod(lt->getClass(), "__eq__").size() && !findMethod(lt->getClass(), "__ne__").size())
+    return transform(N<BinaryExpr>(expr->getLhs(), expr->getOp() == "==" ? "is" : "is not",
+                                   expr->getRhs()));
+
   return nullptr;
 }
 
