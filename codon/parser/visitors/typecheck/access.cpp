@@ -384,6 +384,14 @@ TypecheckVisitor::getImport(const std::vector<std::string> &chain) {
   if (importEnd == chain.size())
     return {importEnd, val};
 
+  // NES: a variable named like a class shadows it, as in Python: with a parameter `str`, `str.split` is an attribute
+  // of the parameter. The class prefix search below would find the global method `str.split` by its full name.
+  if (importName.empty() && chain.size() > 1) {
+    auto head = ctx->find(chain[0], getTime());
+    if (head && head->isVar() && !head->getType()->is("Import"))
+      return {1, head};
+  }
+
   // Find the longest prefix that corresponds to the existing class
   // (e.g., `a.b.c` -> `a.b` if there is `class a: class b:`)
   std::string itemName;
