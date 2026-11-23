@@ -736,6 +736,9 @@ void ScopingVisitor::visit(WithStmt *stmt) {
 }
 
 void ScopingVisitor::visit(ClassStmt *stmt) {
+  // NES: `__class_getitem__ = classmethod(types.GenericAlias)` in a class body makes `C[int]` valid in type hints
+  // (CPython's urllib.parse). Compiled code does not need it at run time, so the class variable is removed.
+  TypecheckVisitor::nesDropClassGetItem(stmt);
   TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
   // @tuple(init=, repr=, eq=, order=, hash=, pickle=, container=, python=, add=,
   // internal=...)

@@ -2008,4 +2008,10 @@ void TypecheckVisitor::nesForwardReferences(Cache *cache, ClassStmt *stmt) {
       a.type = nesForwardReference(cache, a.type);
 }
 
+void TypecheckVisitor::nesDropClassGetItem(ClassStmt *stmt) {
+  std::erase_if(stmt->items, [](const Param &a) {
+    return a.getName() == "__class_getitem__" && ClassStmt::isClassVar(a);
+  });
+}
+
 } // namespace codon::ast

@@ -41,6 +41,8 @@ public:
   static Expr *nesForwardReference(Cache *, Expr *);
   static void nesForwardReferences(Cache *, FunctionStmt *);
   static void nesForwardReferences(Cache *, ClassStmt *);
+  /// NES: remove a `__class_getitem__` class variable (a type-hint helper).
+  static void nesDropClassGetItem(ClassStmt *);
 
   // static Stmt * apply(Cache *cache, const Stmt * &stmts);
   static Stmt *

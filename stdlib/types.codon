@@ -1,0 +1,75 @@
+# NES: Python's types module names built-in types that have no builtin name. CPython takes them from the C module
+# _types, or finds them by making an object and asking for its type (`type(_f.__code__)`), which compiled code cannot
+# do. Here a name is the Codon type where one exists; the others are empty placeholder classes, so that a module that
+# imports or mentions them compiles. new_class, prepare_class, coroutine and the other run-time class helpers are not
+# provided.
+
+FunctionType = Function
+LambdaType = Function
+GeneratorType = Generator
+from internal.core import NoneType
+
+class CodeType:
+    pass
+
+class CellType:
+    pass
+
+class MappingProxyType:
+    pass
+
+class SimpleNamespace:
+    pass
+
+class CoroutineType:
+    pass
+
+class AsyncGeneratorType:
+    pass
+
+class MethodType:
+    pass
+
+class BuiltinFunctionType:
+    pass
+
+BuiltinMethodType = BuiltinFunctionType
+
+class WrapperDescriptorType:
+    pass
+
+class MethodWrapperType:
+    pass
+
+class MethodDescriptorType:
+    pass
+
+class ClassMethodDescriptorType:
+    pass
+
+class ModuleType:
+    pass
+
+class TracebackType:
+    pass
+
+class FrameType:
+    pass
+
+class GetSetDescriptorType:
+    pass
+
+class MemberDescriptorType:
+    pass
+
+class GenericAlias:
+    pass
+
+class UnionType:
+    pass
+
+class EllipsisType:
+    pass
+
+class NotImplementedType:
+    pass
