@@ -143,6 +143,10 @@ class str:
     ptr: Ptr[byte]
     len: int
 
+
+# NES: str under a name that user code does not shadow, for the code the compiler generates (f-strings).
+__nes_str__ = str
+
 @tuple
 @__internal__
 @__noextend__

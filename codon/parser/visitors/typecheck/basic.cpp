@@ -44,16 +44,18 @@ void TypecheckVisitor::visit(StringExpr *expr) {
     unify(expr->getType(), instantiateStatic(expr->getValue()));
     expr->setDone();
   } else {
+    // NES: str and repr by their canonical names, so a user variable named str (or repr) does not take their place.
+    const std::string strClass = "__nes_str__";
     std::vector<Expr *> items;
     for (auto &p : *expr) {
       if (p.expr) {
         if (!p.format.conversion.empty()) {
           switch (p.format.conversion[0]) {
           case 'r':
-            p.expr = N<CallExpr>(N<IdExpr>("repr"), p.expr);
+            p.expr = N<CallExpr>(N<IdExpr>(getMangledFunc("std.internal.builtin", "repr")), p.expr);
             break;
           case 's':
-            p.expr = N<CallExpr>(N<IdExpr>("str"), p.expr);
+            p.expr = N<CallExpr>(N<IdExpr>(strClass), p.expr);
             break;
           case 'a':
             p.expr = N<CallExpr>(N<IdExpr>("ascii"), p.expr);
@@ -67,9 +69,9 @@ void TypecheckVisitor::visit(StringExpr *expr) {
           p.expr = N<CallExpr>(N<DotExpr>(p.expr, "__format__"),
                                N<StringExpr>(p.format.spec));
         }
-        p.expr = N<CallExpr>(N<IdExpr>("str"), p.expr);
+        p.expr = N<CallExpr>(N<IdExpr>(strClass), p.expr);
         if (!p.format.text.empty()) {
-          p.expr = N<CallExpr>(N<DotExpr>(N<IdExpr>("str"), "cat"),
+          p.expr = N<CallExpr>(N<DotExpr>(N<IdExpr>(strClass), "cat"),
                                N<StringExpr>(p.format.text), p.expr);
         }
         items.emplace_back(p.expr);
@@ -77,7 +79,7 @@ void TypecheckVisitor::visit(StringExpr *expr) {
         /// Custom prefix strings:
         /// call `str.__prefsix_[prefix]__(str, [static length of str])`
         items.emplace_back(N<CallExpr>(
-            N<DotExpr>(N<IdExpr>("str"), fmt::format("__prefix_{}__", p.prefix)),
+            N<DotExpr>(N<IdExpr>(strClass), fmt::format("__prefix_{}__", p.prefix)),
             N<StringExpr>(p.value), N<IntExpr>(p.value.size())));
       } else {
         items.emplace_back(N<StringExpr>(p.value));
@@ -86,7 +88,7 @@ void TypecheckVisitor::visit(StringExpr *expr) {
     if (items.size() == 1)
       resultExpr = transform(items.front());
     else
-      resultExpr = transform(N<CallExpr>(N<DotExpr>(N<IdExpr>("str"), "cat"), items));
+      resultExpr = transform(N<CallExpr>(N<DotExpr>(N<IdExpr>(strClass), "cat"), items));
   }
 }
 
