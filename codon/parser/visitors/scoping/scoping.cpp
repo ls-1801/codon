@@ -904,9 +904,15 @@ void ScopingVisitor::visit(ClassStmt *stmt) {
       STOP_ERROR(Error::CLASS_BAD_DECORATOR, d);
     }
   }
+  // NES: untyped class variables (`PREFIX = "n="`) do not stop the inference of fields from __init__; annotated
+  // items (fields, `ClassVar[...]`) still do.
+  bool onlyClassVars = true;
+  for (const auto &a : *stmt)
+    if (a.getType())
+      onlyClassVars = false;
   if (!stmt->hasAttribute(Attr::Tuple) && !stmt->hasAttribute(Attr::Internal) &&
       !stmt->hasAttribute(Attr::Dataclass) && stmt->getStaticBaseClasses().empty() &&
-      stmt->size() == 0) {
+      onlyClassVars) {
     stmt->setAttribute(Attr::ClassDeduce);
   }
   if (!stmt->hasAttribute(Attr::Tuple)) {
