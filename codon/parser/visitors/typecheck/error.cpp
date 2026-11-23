@@ -262,10 +262,15 @@ void TypecheckVisitor::visit(ThrowStmt *stmt) {
   }
 
   stmt->expr = transform(stmt->getExpr());
-  if (!match(stmt->getExpr(),
+  // NES: wrap only once. After the first type-check round the callee of the wrapping call has its realized name, so the
+  // match below failed, and every further round (while the exception's type is still open) wrapped the expression again:
+  // the expression doubled per round, and compiling such a module did not end.
+  if (!stmt->transformed &&
+      !match(stmt->getExpr(),
              M<CallExpr>(M<IdExpr>(getMangledMethod("std.internal.types.error",
                                                     "BaseException", "_set_header")),
                          M_))) {
+    stmt->transformed = true;
     stmt->expr = transform(N<CallExpr>(
         N<IdExpr>(getMangledMethod("std.internal.types.error", "BaseException",
                                    "_set_header")),
