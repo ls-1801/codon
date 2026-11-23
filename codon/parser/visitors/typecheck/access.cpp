@@ -271,6 +271,41 @@ void TypecheckVisitor::visit(DotExpr *expr) {
           !bestMethod->ast->hasAttribute(Attr::StaticMethod) &&
           !bestMethod->ast->hasAttribute(Attr::Property);
 
+      // NES: a virtual call passes the method to RTTIType._thunk_dispatch as a type parameter, which needs a method
+      // without open parameter types: a method with an unannotated parameter (`def check(self, a)`) never type-checked
+      // as a virtual call. If no subclass of the receiver's class overrides the method, the call cannot reach another
+      // method and is a direct call. Otherwise it is an error that says what to annotate.
+      if (isVirtual && vt->getClass()) {
+        bool generic = false;
+        size_t ai = 0;
+        for (auto &a : *bestMethod)
+          if (ai++ > 0 && !a.getType()->canRealize())
+            generic = true;
+        if (generic) {
+          auto member = getUnmangledName(bestMethod->ast->getName());
+          std::string overriding;
+          for (auto &[name, sub] : ctx->cache->classes) {
+            if (name == vt->getClass()->name || !in(sub.methods, member))
+              continue;
+            for (auto &m : sub.mro)
+              if (m && m->is(vt->getClass()->name)) {
+                overriding = name;
+                break;
+              }
+            if (!overriding.empty())
+              break;
+          }
+          if (overriding.empty())
+            isVirtual = false;
+          else
+            E(Error::CUSTOM, expr,
+              "'{}.{}' is overridden in '{}' and has parameters without type annotations: a call through "
+              "'{}' needs dynamic dispatch, which Codon supports only for annotated parameters",
+              getUnmangledName(vt->getClass()->name), member, getUnmangledName(overriding),
+              getUnmangledName(vt->getClass()->name));
+        }
+      }
+
       if (parentCall && !bestMethod->ast->hasAttribute(Attr::StaticMethod) &&
           !bestMethod->ast->hasAttribute(Attr::Property) && !isVirtual) {
         // Instance access: `obj.method` from the call
