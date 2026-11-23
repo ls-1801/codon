@@ -139,8 +139,10 @@ void FormatVisitor::visit(SetExpr *expr) {
 void FormatVisitor::visit(DictExpr *expr) {
   std::vector<std::string> s;
   for (auto *i : *expr) {
-    auto t = cast<TupleExpr>(i);
-    s.push_back(fmt::format("{}: {}", transform((*t)[0]), transform((*t)[1])));
+    if (auto t = cast<TupleExpr>(i))
+      s.push_back(fmt::format("{}: {}", transform((*t)[0]), transform((*t)[1])));
+    else
+      s.push_back(transform(i));
   }
   result = renderExpr(expr, "{{{}}}", join(s, ", "));
 }

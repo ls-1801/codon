@@ -229,9 +229,10 @@ std::string SetExpr::toString(int) const {
 
 DictExpr::DictExpr(std::vector<Expr *> items)
     : AcceptorExtend(), Items(std::move(items)) {
+  // An item is a key-value pair or a **mapping, which the type checker unpacks.
   for (auto *i : *this) {
     auto t = cast<TupleExpr>(i);
-    seqassertn(t && t->size() == 2, "dictionary items are invalid");
+    seqassertn((t && t->size() == 2) || cast<KeywordStarExpr>(i), "dictionary items are invalid");
   }
 }
 DictExpr::DictExpr(const DictExpr &expr, bool clean)
