@@ -9,6 +9,7 @@
 #include "codon/parser/match.h"
 #include "codon/parser/peg/peg.h"
 #include "codon/parser/visitors/scoping/scoping.h"
+#include "codon/parser/visitors/typecheck/typecheck.h"
 
 #define CHECK(x)                                                                       \
   {                                                                                    \
@@ -448,6 +449,7 @@ void ScopingVisitor::visit(YieldExpr *expr) {
 }
 
 void ScopingVisitor::visit(FunctionStmt *stmt) {
+  TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
   // Validate
   std::vector<Expr *> newDecorators;
   for (auto &d : stmt->getDecorators()) {
@@ -621,6 +623,7 @@ void ScopingVisitor::visit(WithStmt *stmt) {
 }
 
 void ScopingVisitor::visit(ClassStmt *stmt) {
+  TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
   // @tuple(init=, repr=, eq=, order=, hash=, pickle=, container=, python=, add=,
   // internal=...)
   // @dataclass(...)
@@ -635,19 +638,86 @@ void ScopingVisitor::visit(ClassStmt *stmt) {
       {"len", false},          {"to_gpu", false},  {"from_gpu", false},
       {"from_gpu_new", false}, {"tuplesize", true}};
 
+  // NES: `@functools.total_ordering` adds the comparison methods that the class does not define, from the first
+  // defined one of __lt__, __le__, __gt__, __ge__ and __eq__, with the formulas of CPython's functools.
+  {
+    std::vector<Expr *> decorators;
+    bool totalOrdering = false;
+    for (auto *d : stmt->getDecorators()) {
+      auto dot = cast<DotExpr>(d);
+      if (isId(d, "total_ordering") ||
+          (dot && dot->getMember() == "total_ordering" && isId(dot->getExpr(), "functools")))
+        totalOrdering = true;
+      else
+        decorators.push_back(d);
+    }
+    if (totalOrdering) {
+      stmt->setDecorators(decorators);
+      std::unordered_set<std::string> defined;
+      std::function<void(Stmt *)> collect = [&](Stmt *s) {
+        if (auto f = cast<FunctionStmt>(s))
+          defined.insert(f->getName());
+        else if (auto suite = cast<SuiteStmt>(s))
+          for (auto *x : *suite)
+            collect(x);
+      };
+      collect(stmt->getSuite());
+      // root -> {missing method, expression from r (the root's result), self and other}
+      static const std::vector<std::pair<std::string, std::vector<std::pair<std::string, std::string>>>>
+          conversions = {
+              {"__lt__",
+               {{"__gt__", "not r and self != other"}, {"__le__", "r or self == other"}, {"__ge__", "not r"}}},
+              {"__le__",
+               {{"__ge__", "not r or self == other"}, {"__lt__", "r and self != other"}, {"__gt__", "not r"}}},
+              {"__gt__",
+               {{"__lt__", "not r and self != other"}, {"__ge__", "r or self == other"}, {"__le__", "not r"}}},
+              {"__ge__",
+               {{"__le__", "not r or self == other"}, {"__gt__", "r and self != other"}, {"__lt__", "not r"}}}};
+      std::string code;
+      for (auto &[root, others] : conversions)
+        if (defined.contains(root)) {
+          for (auto &[name, expr] : others)
+            if (!defined.contains(name))
+              code += fmt::format("def {}(self, other) -> bool:\n    r = self.{}(other)\n    return {}\n", name,
+                                  root, expr);
+          break;
+        }
+      if (code.empty() && !defined.contains("__lt__") && !defined.contains("__le__") &&
+          !defined.contains("__gt__") && !defined.contains("__ge__"))
+        STOP_ERROR(Error::CUSTOM, stmt, "must define at least one ordering operation: < > <= >=");
+      if (!code.empty()) {
+        auto parsed = parseCode(ctx->cache, stmt->getSrcInfo().file, code, stmt->getSrcInfo().line);
+        if (!parsed)
+          STOP_ERROR(Error::CUSTOM, stmt, "total_ordering: could not generate the comparison methods");
+        stmt->getSuite()->addStmt(*parsed);
+      }
+    }
+  }
+  // NES: `dataclasses.dataclass` is `dataclass`, and a dataclass has Python's defaults (repr=True, eq=True).
+  auto isDataclass = [](Expr *e) {
+    if (isId(e, "dataclass"))
+      return true;
+    auto dot = cast<DotExpr>(e);
+    return dot && dot->getMember() == "dataclass" && isId(dot->getExpr(), "dataclasses");
+  };
+  for (auto &d : stmt->getDecorators()) {
+    auto c = cast<CallExpr>(d);
+    if (isDataclass(d) || (c && isDataclass(c->getExpr())))
+      tupleMagics["repr"] = tupleMagics["eq"] = tupleMagics["ne"] = true;
+  }
   for (auto &d : stmt->getDecorators()) {
     if (isId(d, "__notuple__")) {
       stmt->setAttribute(Attr::ClassNoTuple);
     } else if (isId(d, "__noextend__")) {
       stmt->setAttribute(Attr::NoExtend);
-    } else if (isId(d, "dataclass")) {
+    } else if (isDataclass(d)) {
       stmt->setAttribute(Attr::Dataclass);
     } else if (auto c = cast<CallExpr>(d)) {
       if (isId(c->getExpr(), "tuple")) {
         stmt->setAttribute(Attr::Tuple);
         for (auto &val : tupleMagics | std::views::values)
           val = true;
-      } else if (!isId(c->getExpr(), "dataclass")) {
+      } else if (!isDataclass(c->getExpr())) {
         STOP_ERROR(Error::CLASS_BAD_DECORATOR, c->getExpr());
       } else if (stmt->hasAttribute(Attr::Tuple)) {
         STOP_ERROR(Error::CLASS_CONFLICT_DECORATOR, c, "dataclass", "tuple");
@@ -677,6 +747,12 @@ void ScopingVisitor::visit(ClassStmt *stmt) {
               tupleMagics["from_gpu_new"] = val;
         } else if (a.getName() == "container") {
           tupleMagics["iter"] = tupleMagics["getitem"] = val;
+        } else if (a.getName() == "frozen" || a.getName() == "unsafe_hash") {
+          // NES: Python's dataclass arguments. A frozen dataclass is hashable (its fields are not made read-only).
+          tupleMagics["hash"] = tupleMagics["hash"] || val;
+        } else if (a.getName() == "slots" || a.getName() == "match_args" ||
+                   a.getName() == "weakref_slot") {
+          // NES: no effect in Codon.
         } else {
           STOP_ERROR(Error::CLASS_BAD_DECORATOR_ARG, a.getSrcInfo());
         }

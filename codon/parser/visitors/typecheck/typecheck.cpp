@@ -1968,4 +1968,44 @@ ir::PyFunction TypecheckVisitor::cythonizeFunction(const std::string &name) {
   return {"", ""};
 }
 
+/// NES: a string annotation is a forward reference in Python (`def __lt__(self, other: "Node")`, `List["Node"]`):
+/// parse it as the type expression it holds. `Literal[...]` arguments stay strings.
+Expr *TypecheckVisitor::nesForwardReference(Cache *cache, Expr *e) {
+  if (!e)
+    return e;
+  if (auto str = cast<StringExpr>(e)) {
+    if (!str->isSimple() || str->getValue().empty())
+      return e;
+    auto parsed = parseExpr(cache, str->getValue(), e->getSrcInfo());
+    if (!parsed) {
+      llvm::consumeError(parsed.takeError());
+      return e;
+    }
+    return parsed->first;
+  }
+  if (auto index = cast<IndexExpr>(e)) {
+    if (isId(index->getExpr(), "Literal") || isId(index->getExpr(), "Static"))
+      return e;
+    if (auto tuple = cast<TupleExpr>(index->getIndex())) {
+      for (auto &item : *tuple)
+        item = nesForwardReference(cache, item);
+    } else {
+      index->index = nesForwardReference(cache, index->getIndex());
+    }
+  }
+  return e;
+}
+
+void TypecheckVisitor::nesForwardReferences(Cache *cache, FunctionStmt *stmt) {
+  for (auto &a : *stmt)
+    a.type = nesForwardReference(cache, a.type);
+  stmt->ret = nesForwardReference(cache, stmt->ret);
+}
+
+void TypecheckVisitor::nesForwardReferences(Cache *cache, ClassStmt *stmt) {
+  for (auto &a : *stmt)
+    if (a.isValue())
+      a.type = nesForwardReference(cache, a.type);
+}
+
 } // namespace codon::ast

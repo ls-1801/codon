@@ -37,6 +37,11 @@ class TypecheckVisitor : public ReplacingCallbackASTVisitor {
   Stmt *resultStmt = nullptr;
 
 public:
+  /// NES: parse string annotations (forward references) of a function or class.
+  static Expr *nesForwardReference(Cache *, Expr *);
+  static void nesForwardReferences(Cache *, FunctionStmt *);
+  static void nesForwardReferences(Cache *, ClassStmt *);
+
   // static Stmt * apply(Cache *cache, const Stmt * &stmts);
   static Stmt *
   apply(Cache *cache, Stmt *node, const std::string &file,

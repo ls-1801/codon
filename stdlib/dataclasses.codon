@@ -1,0 +1,4 @@
+# NES: `from dataclasses import dataclass` as in Python. Codon reads `@dataclass` and `@dataclass(eq=..., order=...)` on a
+# class itself (every Codon class has the dataclass magics), so this function is only the name that the import binds.
+def dataclass(cls):
+    return cls

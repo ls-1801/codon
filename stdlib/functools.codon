@@ -3,3 +3,66 @@
 @no_arg_reorder
 def partial():  # internal
     pass
+
+# NES: functools as in Python, for UDF code.
+
+# `@total_ordering` on a class is read at compile time (the scoping pass adds the missing comparison methods); this
+# function is only the name that the import binds.
+def total_ordering(cls):
+    return cls
+
+def reduce(function, iterable):
+    it = iter(iterable)
+    if it.done():
+        raise TypeError("reduce() of empty iterable with no initial value")
+    value = it.__next__()
+    for element in it:
+        value = function(value, element)
+    return value
+
+@overload
+def reduce(function, iterable, initial):
+    value = initial
+    for element in iterable:
+        value = function(value, element)
+    return value
+
+# A UDF is called once per row with values of the row; caching is a performance hint only, so the cache decorators
+# return the function itself.
+def cache(user_function):
+    return user_function
+
+def _nes_identity(user_function):
+    return user_function
+
+def lru_cache(maxsize=128, typed: bool = False):
+    if isinstance(maxsize, int) or maxsize is None:
+        return _nes_identity
+    else:
+        return maxsize
+
+def cmp_to_key(mycmp):
+    return lambda x: _NesCmpKey(x, mycmp)
+
+class _NesCmpKey[T, F]:
+    obj: T
+    cmp: F
+
+    def __init__(self, obj: T, cmp: F):
+        self.obj = obj
+        self.cmp = cmp
+
+    def __lt__(self, other: _NesCmpKey[T, F]) -> bool:
+        return self.cmp(self.obj, other.obj) < 0
+
+    def __gt__(self, other: _NesCmpKey[T, F]) -> bool:
+        return self.cmp(self.obj, other.obj) > 0
+
+    def __le__(self, other: _NesCmpKey[T, F]) -> bool:
+        return self.cmp(self.obj, other.obj) <= 0
+
+    def __ge__(self, other: _NesCmpKey[T, F]) -> bool:
+        return self.cmp(self.obj, other.obj) >= 0
+
+    def __eq__(self, other: _NesCmpKey[T, F]) -> bool:
+        return self.cmp(self.obj, other.obj) == 0
