@@ -371,6 +371,7 @@ public:
   static Expr *getHeadExpr(Expr *e);
 
   Expr *transformNamedTuple(CallExpr *);
+  Stmt *transformImportFallback(TryStmt *);
   Expr *transformFunctoolsPartial(CallExpr *);
   Expr *transformSuperF(CallExpr *);
   Expr *transformSuper();

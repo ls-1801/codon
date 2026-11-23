@@ -3,6 +3,7 @@
 #include "codon/parser/ast.h"
 #include "codon/parser/common.h"
 #include "codon/parser/match.h"
+#include "codon/parser/visitors/format/format.h"
 #include "codon/parser/visitors/typecheck/typecheck.h"
 
 namespace codon::ast {
@@ -50,7 +51,85 @@ void TypecheckVisitor::visit(AssertStmt *stmt) {
 ///            e = exc.pytype; ...; break
 ///          f = exc; ...; break                       # PyExc
 ///          raise```
+/// NES: Python code imports an optional module in a `try` and falls back in the handler:
+///   try:
+///       from _speedups import f
+///   except ImportError:
+///       def f(x): ...
+/// If such an import names a module that Codon does not find, and a handler of the `try` catches ImportError (as
+/// ImportError, ModuleNotFoundError, Exception, BaseException, in a tuple, or bare), the `try` statement becomes the
+/// statements before the import, the first such handler, and the `finally` suite: what Python runs. Codon would
+/// otherwise reject the whole module at compile time. If every import is found, the `try` statement becomes its body,
+/// `else` and `finally` suites.
+Stmt *TypecheckVisitor::transformImportFallback(TryStmt *stmt) {
+  if (ctx->autoPython)
+    return nullptr;
+  auto catchesImportError = [](Expr *e) {
+    if (!e)
+      return true;
+    auto ok = [](Expr *x) {
+      for (auto n : {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"})
+        if (isId(x, n))
+          return true;
+      return false;
+    };
+    if (ok(e))
+      return true;
+    if (auto t = cast<TupleExpr>(e))
+      for (auto *x : *t)
+        if (ok(x))
+          return true;
+    return false;
+  };
+  ExceptStmt *handler = nullptr;
+  for (auto &c : *stmt)
+    if (catchesImportError(c->getException())) {
+      handler = c;
+      break;
+    }
+  if (!handler)
+    return nullptr;
+  std::vector<Stmt *> before;
+  for (auto *s : *stmt->getSuite()) {
+    auto imp = cast<ImportStmt>(s);
+    if (!imp)
+      return nullptr; // only a leading run of imports (and nothing that could raise first)
+    if (match(imp->getFrom(), M<IdExpr>(MOr("C", "python"))))
+      return nullptr;
+    auto components = getImportPath(imp->getFrom(), imp->getDots());
+    auto file = getImportFile(ctx->cache, combine2(components, "/"), ctx->getFilename(), false,
+                              imp->getDots() > 0);
+    if (!file) {
+      auto suite = N<SuiteStmt>(before);
+      auto module = FormatVisitor::apply(imp->getFrom());
+      if (!handler->getVar().empty())
+        suite->addStmt(N<AssignStmt>(
+            N<IdExpr>(handler->getVar()),
+            N<CallExpr>(N<IdExpr>("ModuleNotFoundError"),
+                        N<StringExpr>(fmt::format("No module named '{}'", module)))));
+      suite->addStmt(clean_clone(handler->getSuite()));
+      if (stmt->getFinally())
+        suite->addStmt(clean_clone(stmt->getFinally()));
+      return suite;
+    }
+    before.push_back(clean_clone(s));
+  }
+  // Every import is found: the handlers cannot run (an import of a missing name is a compile-time error), and their
+  // code may not type-check (`except ImportError: cache = None` after `from functools import cache`). The `try`
+  // statement becomes its body, its `else` suite and its `finally` suite.
+  auto suite = N<SuiteStmt>(before);
+  if (stmt->getElse())
+    suite->addStmt(clean_clone(stmt->getElse()));
+  if (stmt->getFinally())
+    suite->addStmt(clean_clone(stmt->getFinally()));
+  return suite;
+}
+
 void TypecheckVisitor::visit(TryStmt *stmt) {
+  if (auto fallback = transformImportFallback(stmt)) {
+    resultStmt = transform(fallback);
+    return;
+  }
   ctx->blockLevel++;
   stmt->suite = SuiteStmt::wrap(transform(stmt->getSuite()));
   ctx->blockLevel--;

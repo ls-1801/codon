@@ -135,6 +135,18 @@ class AttributeError(Exception):
         super().__init__(message)
         self.python_type = self.__class__._pytype
 
+class ImportError(Exception):
+    _pytype: ClassVar[cobj] = cobj()
+    def __init__(self, message: str = ""):
+        super().__init__(message)
+        self.python_type = self.__class__._pytype
+
+class ModuleNotFoundError(ImportError):
+    _pytype: ClassVar[cobj] = cobj()
+    def __init__(self, message: str = ""):
+        super().__init__(message)
+        self.python_type = self.__class__._pytype
+
 class RuntimeError(Exception):
     _pytype: ClassVar[cobj] = cobj()
     def __init__(self, message: str = ""):
