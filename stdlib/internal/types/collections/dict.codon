@@ -184,7 +184,15 @@ class Dict:
         if new_n_buckets > self._n_buckets:
             self._kh_rebuild(_dict_buckets_for(new_n_buckets))
 
-    def get(self, key: K, s: V) -> V:
+    def get(self, key: K, s):
+        # NES: d.get(k, None) is d.get(k), an Optional[V]. With the annotation s: V, the None default was converted to
+        # V when the call was made, which raised even for a present key.
+        if s is None:
+            return self.get(key)
+        else:
+            return self._get_or(key, s)
+
+    def _get_or(self, key: K, s: V) -> V:
         x = self._kh_get(key)
         return self._vals[x] if x != self._kh_end() else s
 
