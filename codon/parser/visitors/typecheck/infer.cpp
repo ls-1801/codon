@@ -115,6 +115,10 @@ Stmt *TypecheckVisitor::inferTypes(Stmt *result, bool isToplevel) {
       break;
     } else if (changedNodes) {
       continue;
+    } else if (ctx->getBase()->intReturnsDeferred && !ctx->getBase()->bindIntReturns) {
+      // NES: nothing changed while int returns waited for the return type (see ReturnStmt): bind them now.
+      ctx->getBase()->bindIntReturns = true;
+      continue;
     } else {
       // Special case: nothing was changed, however there are unbound types that have
       // default values (e.g., generics with default values). Unify those types with

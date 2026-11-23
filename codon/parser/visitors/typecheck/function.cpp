@@ -126,6 +126,16 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
         ctx->getBase()->returnType->getUnbound() && inUserCode())
       return;
 
+    // NES: in user code, an int return waits while the return type is unbound, so that a float return elsewhere
+    // (`return 1` and `return 1 - d / m`) makes the return type float and this value converts to it; inferTypes binds
+    // the waiting returns when nothing else changes.
+    if (!isAsync && ctx->getBase()->returnType->getUnbound() && inUserCode() &&
+        !ctx->getBase()->bindIntReturns && stmt->getExpr()->getClassType() &&
+        stmt->getExpr()->getClassType()->is("int")) {
+      ctx->getBase()->intReturnsDeferred = true;
+      return;
+    }
+
     // A returned value whose type does not match the annotated return type T converts through `value.__as__(T)` if its
     // class (or the class in an Optional) has that method; a None in the Optional fails at run time, as when an Optional
     // is returned as its content type.

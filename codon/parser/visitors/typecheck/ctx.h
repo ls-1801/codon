@@ -102,6 +102,10 @@ struct TypeContext : public Context<TypecheckItem> {
     types::TypePtr returnType;
     /// Typechecking iteration
     int iteration = 0;
+    /// NES: in user code, a return of an int does not bind an unbound return type until the iterations stop making
+    /// progress, so that a return of a float elsewhere makes the return type float (Python mixes them).
+    bool intReturnsDeferred = false;
+    bool bindIntReturns = false;
     /// Only set for functions.
     FunctionStmt *func = nullptr;
     Stmt *suite = nullptr;
