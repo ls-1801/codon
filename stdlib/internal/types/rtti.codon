@@ -5,6 +5,7 @@ import internal.static as static
 
 __vtables__ = Ptr[Ptr[cobj]]()
 __vtable_size__ = 0
+__nes_vtables_cap__ = 0
 
 
 @extend
@@ -44,11 +45,39 @@ class RTTIType:
 
         from internal.gc import alloc_atomic_uncollectable, sizeof
 
-        global __vtables__
+        global __vtables__, __nes_vtables_cap__
         sz = __vtable_size__ + 1
         p = alloc_atomic_uncollectable(sz * sizeof(Ptr[Ptr[byte]]))
         __vtables__ = Ptr[Ptr[Ptr[byte]]](p)
+        __nes_vtables_cap__ = sz
         RTTIType._populate_vtables()
+
+    # NES: vtables of a JIT cell. The top-level code of each cell (generated in TypecheckVisitor::apply) grows the
+    # vtable array to the cell's largest class id and sets the vtables of the polymorphic classes; _populate_vtables
+    # is fixed at the stdlib cell. The names start with _init_vtables: NES allocates there without the uncollectable
+    # allocator (allocateVtablesPersistently).
+    def _init_vtables_grow(sz: int):
+        from internal.gc import alloc_atomic_uncollectable, sizeof
+
+        global __vtables__, __nes_vtables_cap__
+        if sz <= __nes_vtables_cap__:
+            return
+        p = Ptr[Ptr[Ptr[byte]]](alloc_atomic_uncollectable(sz * sizeof(Ptr[Ptr[byte]])))
+        i = 0
+        while i < __nes_vtables_cap__:
+            p[i] = __vtables__[i]
+            i += 1
+        __vtables__ = p
+        __nes_vtables_cap__ = sz
+
+    def _init_vtables_class(sz: int, T: type):
+        from internal.gc import alloc_atomic_uncollectable, sizeof
+
+        p = alloc_atomic_uncollectable((sz + 1) * sizeof(Ptr[byte]))
+        id = T.__id__
+        __vtables__[id] = Ptr[Ptr[byte]](p)
+        p = TypeInfo(T)
+        __vtables__[id][0] = p.__raw__().as_byte()
 
     def _populate_vtables():
         """

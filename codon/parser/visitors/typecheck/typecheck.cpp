@@ -185,10 +185,36 @@ Stmt *TypecheckVisitor::apply(const std::shared_ptr<TypeContext> &ctx, Stmt *nod
     auto errors = tv.findTypecheckErrors(node);
     throw exc::ParserException(errors);
   }
+  // NES: a JIT cell can realize polymorphic classes (a method overridden in a subclass). Their thunk ids are generated
+  // here as for the stdlib, and the cell's top-level code sets their vtables: the stdlib's _populate_vtables is fixed
+  // at the first cell, so virtual calls read vtables that were never set.
+  Stmt *vtables = nullptr;
+  auto populate = ctx->cache->functions.find(
+      getMangledMethod("std.internal.core", "RTTIType", "_populate_vtables"));
+  if (ctx->cache->isJit && !ctx->isStdlibLoading && populate != ctx->cache->functions.end() &&
+      !populate->second.realizations.empty()) {
+    tv.prepareVTables();
+    size_t maxId = 0;
+    for (const auto &cls : ctx->cache->classes | std::views::values)
+      for (const auto &real : cls.realizations | std::views::values)
+        if (!real->vtable.empty())
+          maxId = std::max(maxId, static_cast<size_t>(real->id));
+    if (maxId) {
+      auto vt = ctx->cache->N<SuiteStmt>(ctx->cache->N<ExprStmt>(ctx->cache->N<CallExpr>(
+          ctx->cache->N<DotExpr>(ctx->cache->N<IdExpr>("RTTIType"), "_init_vtables_grow"),
+          ctx->cache->N<IntExpr>(int64_t(maxId + 2)))));
+      vt->addStmt(tv.generateClassPopulateVTablesAST("_init_vtables_class"));
+      vtables = tv.inferTypes(vt, true);
+      if (!vtables)
+        throw exc::ParserException(tv.findTypecheckErrors(vt));
+    }
+  }
   if (!ctx->cache->errors.empty())
     throw exc::ParserException(ctx->cache->errors);
 
   auto suite = ctx->cache->N<SuiteStmt>(preamble);
+  if (vtables)
+    suite->addStmt(vtables);
   suite->addStmt(n);
   return suite;
 }

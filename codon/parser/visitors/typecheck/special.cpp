@@ -50,7 +50,7 @@ void TypecheckVisitor::prepareVTables() {
 
   fn = getFunction(
       getMangledMethod("std.internal.core", "RTTIType", "_populate_vtables"));
-  fn->ast->suite = generateClassPopulateVTablesAST();
+  fn->ast->suite = generateClassPopulateVTablesAST("_init_vtable");
   auto typ = fn->realizations.begin()->second->getType();
   typ->ast = fn->ast;
   LOG_REALIZE("[poly] {} : {}", typ->debugString(2), fn->ast->toString(2));
@@ -69,7 +69,7 @@ void TypecheckVisitor::prepareVTables() {
   fn->ast = oldAst;
 }
 
-SuiteStmt *TypecheckVisitor::generateClassPopulateVTablesAST() {
+SuiteStmt *TypecheckVisitor::generateClassPopulateVTablesAST(const std::string &initVTable) {
   auto suite = N<SuiteStmt>();
   for (const auto &cls : ctx->cache->classes | std::views::values) {
     for (const auto &[r, real] : cls.realizations) {
@@ -77,7 +77,7 @@ SuiteStmt *TypecheckVisitor::generateClassPopulateVTablesAST() {
         continue;
       // RTTIType._init_vtable(size, real.type)
       suite->addStmt(N<ExprStmt>(
-          N<CallExpr>(N<DotExpr>(N<IdExpr>("RTTIType"), "_init_vtable"),
+          N<CallExpr>(N<DotExpr>(N<IdExpr>("RTTIType"), initVTable),
                       N<IntExpr>(ctx->cache->thunkIds.size() + 2), N<IdExpr>(r))));
       LOG_REALIZE("[poly] {} -> {}", r, real->id);
       for (const auto &[key, fn] : real->vtable) {
@@ -229,8 +229,8 @@ SuiteStmt *TypecheckVisitor::generateGetThunkIDAst(types::FuncType *f) {
 
   // Add or extract thunk ID
   auto baseRealization = getClassRealization(cp);
-  seqassert(!in(baseRealization->vtable, key), "thunk {}.{} already added", baseCls,
-            fnSig);
+  // NES: prepareVTables runs for every JIT cell; a thunk of an earlier cell is kept, and only derived classes without
+  // it (e.g. a subclass of a later cell) get one.
   if (!in(ctx->cache->thunkIds, key))
     ctx->cache->thunkIds[key] = 1 + ctx->cache->thunkIds.size();
   auto vid = ctx->cache->thunkIds[key];
@@ -247,6 +247,8 @@ SuiteStmt *TypecheckVisitor::generateGetThunkIDAst(types::FuncType *f) {
       }
     if (inMro && clsName != baseCls) {
       for (const auto &real : cls.realizations | std::views::values) {
+        if (in(real->vtable, key))
+          continue;
         if (auto thunkAst = generateThunkAST(fp, cp, real->getType())) {
           auto thunkFn = getFunction(thunkAst->name);
           auto ti =

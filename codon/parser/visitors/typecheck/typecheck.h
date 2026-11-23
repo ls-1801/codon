@@ -405,7 +405,7 @@ public:
   Expr *transformStaticTupleType(const CallExpr *);
   Expr *transformStaticFormat(CallExpr *);
   Expr *transformStaticIntToStr(CallExpr *);
-  SuiteStmt *generateClassPopulateVTablesAST();
+  SuiteStmt *generateClassPopulateVTablesAST(const std::string &initVTable = "_init_vtable");
   SuiteStmt *generateBaseDerivedDistAST(types::FuncType *);
   FunctionStmt *generateThunkAST(const types::FuncType *fp, types::ClassType *base,
                                  const types::ClassType *derived);
