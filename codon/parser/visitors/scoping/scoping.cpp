@@ -121,6 +121,24 @@ bool ScopingVisitor::transformAdding(Expr *e, ASTNode *root) {
       ctx->classDeduce.second.insert(de->getMember());
     return true;
   } else if (cast<ListExpr>(e) || cast<TupleExpr>(e) || cast<IdExpr>(e)) {
+    // NES: `self.a, self.b = ...` in __init__ also declares the fields a and b.
+    if (!ctx->classDeduce.first.empty()) {
+      std::function<void(Expr *)> collect = [&](Expr *x) {
+        if (auto d = cast<DotExpr>(x)) {
+          if (match(d->getExpr(), M<IdExpr>(ctx->classDeduce.first)))
+            ctx->classDeduce.second.insert(d->getMember());
+        } else if (auto t = cast<TupleExpr>(x)) {
+          for (auto *i : *t)
+            collect(i);
+        } else if (auto l = cast<ListExpr>(x)) {
+          for (auto *i : *l)
+            collect(i);
+        } else if (auto st = cast<StarExpr>(x)) {
+          collect(st->getExpr());
+        }
+      };
+      collect(e);
+    }
     SetInScope s1(&(ctx->adding), true);
     SetInScope s2(&(ctx->root), root);
     return transform(e);
