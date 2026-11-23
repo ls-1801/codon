@@ -105,8 +105,16 @@ struct ParserBase {
     miss();
     return nullptr;
   }
-  /// Whitespace precedes the next token.
-  bool sp() const { return pos < toks.size() && toks[pos].spaceBefore; }
+  /// Whitespace precedes the next token, or the previous token is a hard keyword. The grammar requires SP after
+  /// keywords because the PEG parser it comes from needed whitespace to end a keyword; tokens are already separate, and
+  /// Python accepts `if(x):`, `return(x)`, `not(x)` and `x in(1, 2)`.
+  bool sp() const {
+    if (pos >= toks.size())
+      return false;
+    if (toks[pos].spaceBefore)
+      return true;
+    return pos > 0 && toks[pos - 1].kind == Kind::Name && isHardKeyword(text(&toks[pos - 1]));
+  }
 
   /// The source position of the tokens from start to the current position.
   SrcInfo loc(size_t start) const {
