@@ -381,6 +381,11 @@ void TypecheckVisitor::visit(SuiteStmt *stmt) {
 
 /// Typecheck expression statements.
 void TypecheckVisitor::visit(ExprStmt *stmt) {
+  // NES: a lambda as a statement has no effect in Python; as an unused generic function it could not be type checked.
+  if (cast<LambdaExpr>(stmt->getExpr())) {
+    resultStmt = N<SuiteStmt>();
+    return;
+  }
   stmt->expr = transform(stmt->getExpr());
   if (stmt->getExpr()->isDone())
     stmt->setDone();
