@@ -309,11 +309,15 @@ def _int_format(a: int, base: int, prefix: str = ""):
     assert base == 2 or base == 8 or base == 10 or base == 16
     chars = "0123456789abcdef-"
 
-    b = a
+    # The digits come from the magnitude as an unsigned integer: // on a negative int rounds toward negative infinity
+    # with Python numerics and never reaches 0, and -a overflows for the smallest int.
+    m = u64(a) if a >= 0 else u64(0) - u64(a)
+    ubase = u64(base)
+    b = m
     digits = 0
-    while b != 0:
+    while b != u64(0):
         digits += 1
-        b //= base
+        b //= ubase
 
     sz = digits + (1 if a <= 0 else 0) + len(prefix)
     p = Ptr[byte](sz)
@@ -328,14 +332,12 @@ def _int_format(a: int, base: int, prefix: str = ""):
         q += len(prefix)
 
     if digits != 0:
-        b = a
+        b = m
         q += digits - 1
-        i = 1
-        while b != 0:
-            i += 1
-            q[0] = chars.ptr[abs(b % base)]
+        while b != u64(0):
+            q[0] = chars.ptr[int(b % ubase)]
             q += -1
-            b //= base
+            b //= ubase
     else:
         q[0] = chars.ptr[0]
 
