@@ -30,6 +30,13 @@ class Generator:
     def __iter__(self) -> Generator[T]:
         return self
 
+    def __contains__(self, item) -> bool:
+        # NES: `x in g` consumes g up to the first match, as in Python (also `x in d.keys()`, which is a generator here).
+        for x in self:
+            if x == item:
+                return True
+        return False
+
     @pure
     @derives
     @llvm
