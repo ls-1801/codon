@@ -44,8 +44,9 @@ def _python_to_fmt_format(s):
         alternate_form = True
         i += 1
 
+    # NES: the zero flag is '0' (it tested '#' again, so `{n:06d}` padded with spaces).
     width_pre_zero = False
-    if i < len(s) and s[i] == '#':
+    if i < len(s) and s[i] == '0':
         width_pre_zero = True
         i += 1
     width = 0
