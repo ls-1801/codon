@@ -479,6 +479,9 @@ void TypecheckVisitor::visit(ClassStmt *stmt) {
     if (!overridden.empty())
       if (auto copies = nesCopyInheritedReaders(typ, overridden))
         clsStmts.push_back(copies);
+    // NES: inherited methods that read an attribute their base class lacks but this class has.
+    if (auto copies = nesCopyAbstractReaders(typ))
+      clsStmts.push_back(copies);
   }
   resultStmt = N<SuiteStmt>(clsStmts);
 }
