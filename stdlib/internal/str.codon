@@ -107,6 +107,9 @@ class str:
             i -= 1
 
     def __mul__(self, x: int) -> str:
+        # NES: a count of 0 or less gives "", as in Python (it allocated a negative size).
+        if x <= 0:
+            return ""
         total = x * self.len
         p = Ptr[byte](total)
         n = 0
