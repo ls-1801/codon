@@ -386,9 +386,28 @@ Expr *TypecheckVisitor::transformNamedTuple(CallExpr *expr) {
 
   // Construct the class statement
   std::vector<Param> generics, params;
-  auto orig = cast<TupleExpr>(expr->front().getExpr()->getOrigExpr());
+  // The field names: a tuple or list of names (or of (name, type) pairs), or, as in Python, one string of names
+  // separated by spaces or commas (`namedtuple("P", "x y")`). Anything else is an error, not a null dereference.
+  auto origExpr = expr->front().getExpr()->getOrigExpr();
+  std::vector<Expr *> fields;
+  if (auto t = cast<TupleExpr>(origExpr)) {
+    fields.assign(t->begin(), t->end());
+  } else if (auto l = cast<ListExpr>(origExpr)) {
+    fields.assign(l->begin(), l->end());
+  } else if (auto str = cast<StringExpr>(origExpr);
+             (str && str->isSimple()) || expr->front().getExpr()->getType()->getStrStatic()) {
+    std::string names = str && str->isSimple()
+                            ? str->getValue()
+                            : getStrLiteral(expr->front().getExpr()->getType());
+    std::ranges::replace(names, ',', ' ');
+    for (const auto &field : split(names, ' '))
+      if (!field.empty())
+        fields.push_back(N<StringExpr>(field));
+  } else {
+    E(Error::CALL_NAMEDTUPLE, expr);
+  }
   size_t ti = 1;
-  for (auto *i : *orig) {
+  for (auto *i : fields) {
     if (auto s = cast<StringExpr>(i)) {
       generics.emplace_back(fmt::format("T{}", ti), N<IdExpr>(TYPE_TYPE), nullptr,
                             true);
