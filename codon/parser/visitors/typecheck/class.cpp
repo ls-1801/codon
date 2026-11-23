@@ -461,6 +461,25 @@ void TypecheckVisitor::visit(ClassStmt *stmt) {
     // Transform class variables here to allow self-references
     clsStmts.push_back(transform(a));
   }
+  // NES: a class variable that overrides one of a base class (`class Sub(Base): prefix = "s:"`): the inherited methods
+  // that read it are copied into this class (see nesCopyInheritedReaders).
+  if (!stmt->hasAttribute(Attr::Extend) && !stmt->hasAttribute(Attr::Tuple)) {
+    std::vector<std::string> overridden;
+    auto &own = getClass(canonicalName)->classVars;
+    for (auto &[varName, var] : own) {
+      if (var != fmt::format("{}.{}", canonicalName, varName))
+        continue;
+      for (auto &base : getClass(canonicalName)->mro)
+        if (base && !base->is(canonicalName))
+          if (auto bc = getClass(base.get()); bc && in(bc->classVars, varName)) {
+            overridden.push_back(varName);
+            break;
+          }
+    }
+    if (!overridden.empty())
+      if (auto copies = nesCopyInheritedReaders(typ, overridden))
+        clsStmts.push_back(copies);
+  }
   resultStmt = N<SuiteStmt>(clsStmts);
 }
 

@@ -490,9 +490,10 @@ void TranslateVisitor::visit(AssignStmt *stmt) {
   ir::Var *v = nullptr;
 
   if (stmt->isUpdate()) {
-    // NES: a function assigned to a variable that is bound on several paths (`if c: g = f`) is an alias, as a plain
-    // `g = f`: calls through `g` resolve to the function statically, and the function has no IR value to store.
-    if (stmt->getRhs() && stmt->getRhs()->getType() && stmt->getRhs()->getType()->getFunc()) {
+    // NES: a function or a class assigned to a variable that is bound on several paths (`if c: g = f`), or to a class
+    // variable, is an alias, as a plain `g = f`: uses resolve statically, and there is no IR value to store.
+    if (stmt->getRhs() && stmt->getRhs()->getType() &&
+        (stmt->getRhs()->getType()->getFunc() || stmt->getRhs()->getType()->is(TYPE_TYPE))) {
       if (!cast<IdExpr>(stmt->getRhs()))
         result = transform(stmt->getRhs());
       return;

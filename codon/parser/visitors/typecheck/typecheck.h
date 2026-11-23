@@ -374,6 +374,7 @@ public:
 
   Expr *transformNamedTuple(CallExpr *);
   Stmt *transformImportFallback(TryStmt *);
+  Stmt *nesCopyInheritedReaders(types::ClassType *, const std::vector<std::string> &);
   Expr *transformFunctoolsPartial(CallExpr *);
   Expr *transformSuperF(CallExpr *);
   Expr *transformSuper();
