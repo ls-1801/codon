@@ -366,14 +366,14 @@ class float:
         HASH_MODULUS = (1 << HASH_BITS) - 1
         HASH_INF = 314159
         HASH_NAN = 0
-        INF = 1.0 / 0.0
-        NAN = 0.0 / 0.0
         v = self
 
-        if v == INF or v == -INF:
-            return HASH_INF if v > 0 else -HASH_INF
-        if v == NAN:
+        # No 1.0 / 0.0 here: it raises ZeroDivisionError with Python numerics. NaN never compares equal, so it is
+        # tested with v != v (and must be, as the loop below never ends on a NaN mantissa); v - v is NaN only for inf.
+        if v != v:
             return HASH_NAN
+        if v - v != v - v:
+            return HASH_INF if v > 0 else -HASH_INF
 
         _e = i32(0)
         m = frexp(v, __ptr__(_e))
