@@ -10,3 +10,7 @@ def exit(status: int = 0):
     raise SystemExit(status)
 
 maxsize = 0x7FFFFFFFFFFFFFFF
+
+# NES: the CPython version whose behavior the NES Python UDFs follow (CPython 3.14).
+version_info = (3, 14, 0, "final", 0)
+version = "3.14.0"

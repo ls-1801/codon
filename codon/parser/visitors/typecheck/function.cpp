@@ -532,6 +532,30 @@ void TypecheckVisitor::visit(FunctionStmt *stmt) {
   std::vector<ClassType::Generic> explicits;
   std::shared_ptr<types::ClassType> baseType = nullptr;
   bool isGlobal = ctx->isGlobal();
+
+  // NES: in a Python file, `Any` and `AnyStr` annotations (also `| None` and Optional[...] of them) mean "any type", as
+  // the parameter or result would be without an annotation. Codon's Any is a box without the value's methods, so such
+  // an annotation is removed and the type is inferred.
+  if (endswith(ctx->moduleName.path, ".py")) {
+    std::function<bool(Expr *)> isAny = [&](Expr *e) -> bool {
+      if (auto id = cast<IdExpr>(e)) {
+        auto v = id->getValue();
+        return v == "Any" || v == "AnyStr" || endswith(v, ".Any") || endswith(v, ".AnyStr");
+      }
+      if (auto b = cast<BinaryExpr>(e))
+        return b->getOp() == "|" && (isAny(b->getLhs()) || cast<NoneExpr>(b->getLhs())) &&
+               (isAny(b->getRhs()) || cast<NoneExpr>(b->getRhs())) && (isAny(b->getLhs()) || isAny(b->getRhs()));
+      if (auto ix = cast<IndexExpr>(e))
+        return isId(ix->getExpr(), "Optional") && isAny(ix->getIndex());
+      return false;
+    };
+    for (auto &a : *stmt)
+      if (a.isValue() && a.getType() && isAny(a.getType()))
+        a.type = nullptr;
+    if (stmt->getReturn() && isAny(stmt->getReturn()))
+      stmt->ret = nullptr;
+  }
+
   {
     // Set up the base
     TypeContext::BaseGuard br(ctx.get(), canonicalName);

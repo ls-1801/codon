@@ -952,3 +952,18 @@ def isclose(a: float32, b: float32, rel_tol: float32 = float32(1e-09), abs_tol: 
     return ((diff <= fabs(rel_tol * b)) or (diff <= fabs(rel_tol * a))) or (
         diff <= abs_tol
     )
+
+
+def isqrt(n: int) -> int:
+    """The integer square root: the largest int a with a * a <= n."""
+    if n < 0:
+        raise ValueError("isqrt() argument must be nonnegative")
+    if n == 0:
+        return 0
+    x = int(sqrt(float(n)))
+    # correct the float estimate (exact for n below 2**52, off by a few above)
+    while x * x > n:
+        x -= 1
+    while (x + 1) * (x + 1) <= n:
+        x += 1
+    return x

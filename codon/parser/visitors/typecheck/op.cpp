@@ -203,7 +203,12 @@ void TypecheckVisitor::visit(BinaryExpr *expr) {
     }
   }
 
-  if (isTypeExpr(expr->getLhs()) && isTypeExpr(expr->getRhs()) &&
+  if (expr->getOp() == "|" && ((isTypeExpr(expr->getLhs()) && cast<NoneExpr>(expr->getRhs())) ||
+                               (cast<NoneExpr>(expr->getLhs()) && isTypeExpr(expr->getRhs())))) {
+    // NES: `T | None` (PEP 604, e.g. `-> str | None`) is Optional[T]; None is a value, not a type expression.
+    auto type = cast<NoneExpr>(expr->getRhs()) ? expr->getLhs() : expr->getRhs();
+    resultExpr = transform(N<InstantiateExpr>(N<IdExpr>("Optional"), std::vector<Expr *>{type}));
+  } else if (isTypeExpr(expr->getLhs()) && isTypeExpr(expr->getRhs()) &&
       expr->getOp() == "|") {
     // Case: unions
     resultExpr = transform(N<InstantiateExpr>(

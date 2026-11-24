@@ -11,3 +11,8 @@ octdigits = "01234567"
 punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 printable = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c"
 whitespace = " \t\n\r\x0b\x0c"
+
+
+def capwords(s: str, sep: Optional[str] = None) -> str:
+    """Splits s (at sep, or at runs of whitespace), capitalizes each word and joins them with sep or a space."""
+    return (" " if sep is None else sep).join([word.capitalize() for word in s.split(sep)])

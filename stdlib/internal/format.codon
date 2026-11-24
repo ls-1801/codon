@@ -93,14 +93,36 @@ def _python_to_fmt_format(s):
     if type: ns.append(type)
     return str(ns)
 
+def _nes_spec_extras(spec: str) -> Tuple[str, bool, bool]:
+    """NES: the '%' type and '_' grouping, which fmt does not have: '%' becomes 'f' (the caller multiplies by 100 and
+    appends '%'), '_' becomes ',' (the caller replaces the commas). Returns (spec, percent, underscore)."""
+    percent = spec.endswith("%")
+    if percent:
+        spec = spec[:len(spec) - 1] + "f"
+    i = 0
+    if len(spec) >= 2 and spec[1] in "<>^=":
+        i = 2
+    elif len(spec) >= 1 and spec[0] in "<>^=":
+        i = 1
+    while i < len(spec) and spec[i] in "+- #0123456789":
+        i += 1
+    underscore = i < len(spec) and spec[i] == "_"
+    if underscore:
+        spec = spec[:i] + "," + spec[i + 1:]
+    return spec, percent, underscore
+
+
 @extend
 class int:
     def __format__(self, format_spec: str) -> str:
+        spec, percent, underscore = _nes_spec_extras(format_spec)
+        if percent:
+            return float(self).__format__(format_spec)
         err = False
-        ret = _C.seq_str_int(self, _python_to_fmt_format(format_spec), __ptr__(err))
-        if format_spec and err:
+        ret = _C.seq_str_int(self, _python_to_fmt_format(spec), __ptr__(err))
+        if spec and err:
             _format_error(ret)
-        return ret
+        return ret.replace(",", "_") if underscore else ret
 
 @extend
 class Int:
@@ -123,11 +145,17 @@ class UInt:
 @extend
 class float:
     def __format__(self, format_spec: str) -> str:
+        spec, percent, underscore = _nes_spec_extras(format_spec)
         err = False
-        ret = _C.seq_str_float(self, _python_to_fmt_format(format_spec), __ptr__(err))
-        if format_spec and err:
+        ret = _C.seq_str_float(self * 100.0 if percent else self, _python_to_fmt_format(spec), __ptr__(err))
+        if spec and err:
             _format_error(ret)
-        return ret if ret != "-nan" else "nan"
+        if ret == "-nan":
+            ret = "nan"
+        if underscore:
+            ret = ret.replace(",", "_")
+        # ponytail: the '%' is appended after padding, so a width counts one character less than in CPython.
+        return ret + "%" if percent else ret
 
 @extend
 class str:
@@ -475,3 +503,106 @@ class str:
                 return out
             _printf_check_count(specs, 1)
             return out + _printf_one(specs[0], args) + lits[1]
+
+
+# NES: str.format. Fields: {}, {0}, {name}, with !r/!s/!a conversion and a format spec after ':' (no nested fields, no
+# attribute or index access); {{ and }} are literal braces. The arguments are a tuple of any types, so a field selects
+# its argument in a loop that Codon unrolls per argument type.
+def _nes_format_value(value, conversion: str, spec: str) -> str:
+    if conversion == "r":
+        return repr(value).__format__(spec)
+    if conversion == "s":
+        return str(value).__format__(spec)
+    if conversion == "a":
+        return ascii(value).__format__(spec)
+    if spec == "":
+        return str(value)
+    if hasattr(value, "__format__"):
+        return value.__format__(spec)
+    raise TypeError("unsupported format string passed to " + type(value).__name__ + ".__format__")
+
+
+def _nes_format_positional(args, index: int, conversion: str, spec: str) -> str:
+    k = 0
+    for value in args:
+        if k == index:
+            return _nes_format_value(value, conversion, spec)
+        k += 1
+    raise IndexError("Replacement index " + str(index) + " out of range for positional args tuple")
+
+
+def _nes_format_keyword(kwargs, name: str, conversion: str, spec: str) -> str:
+    if static.len(kwargs.args) == 0:
+        raise KeyError(name)
+    else:
+        keys = kwargs.__keys__()
+        k = 0
+        for value in kwargs.args:
+            if keys[k] == name:
+                return _nes_format_value(value, conversion, spec)
+            k += 1
+        raise KeyError(name)
+
+
+@extend
+class str:
+    def format(self, *args, **kwargs) -> str:
+        out = _strbuf()
+        n = self.len
+        i = 0
+        auto = 0
+        manual = False
+        while i < n:
+            c = self.ptr[i]
+            if c == byte(125):
+                if i + 1 < n and self.ptr[i + 1] == byte(125):
+                    out.append("}")
+                    i += 2
+                    continue
+                raise ValueError("Single '}' encountered in format string")
+            if c != byte(123):
+                start = i
+                while i < n and self.ptr[i] != byte(123) and self.ptr[i] != byte(125):
+                    i += 1
+                out.append(str(self.ptr + start, i - start))
+                continue
+            if i + 1 < n and self.ptr[i + 1] == byte(123):
+                out.append("{")
+                i += 2
+                continue
+            j = i + 1
+            while j < n and self.ptr[j] != byte(125):
+                if self.ptr[j] == byte(123):
+                    raise ValueError("NES: nested replacement fields in str.format are not supported")
+                j += 1
+            if j >= n:
+                raise ValueError("expected '}' before end of string")
+            field = str(self.ptr + i + 1, j - i - 1)
+            i = j + 1
+            spec = ""
+            colon = field.find(":")
+            if colon >= 0:
+                spec = field[colon + 1:]
+                field = field[:colon]
+            conversion = ""
+            bang = field.find("!")
+            if bang >= 0:
+                conversion = field[bang + 1:]
+                field = field[:bang]
+                if conversion not in ("r", "s", "a"):
+                    raise ValueError("Unknown conversion specifier " + conversion)
+            if field == "":
+                if manual:
+                    raise ValueError("cannot switch from manual field specification to automatic field numbering")
+                out.append(_nes_format_positional(args, auto, conversion, spec))
+                auto += 1
+            elif field.isdigit():
+                if auto > 0:
+                    raise ValueError("cannot switch from automatic field numbering to manual field specification")
+                manual = True
+                out.append(_nes_format_positional(args, int(field), conversion, spec))
+            elif "." in field or "[" in field:
+                raise ValueError("NES: attribute and index access in str.format fields are not supported")
+            else:
+                out.append(_nes_format_keyword(kwargs, field, conversion, spec))
+        return str(out)

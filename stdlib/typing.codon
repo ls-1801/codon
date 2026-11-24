@@ -1,3 +1,6 @@
 # Copyright (C) 2022-2026 Exaloop Inc. <https://exaloop.io>
 
 # (empty)
+
+# NES: typing.AnyStr (a TypeVar of str and bytes in CPython) as an annotation that accepts any type.
+AnyStr = Any

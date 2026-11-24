@@ -81,6 +81,16 @@ class ValueError(Exception):
         super().__init__(message)
         self.python_type = self.__class__._pytype
 
+    # NES: ValueError(value) and ValueError(a, b, ...) as in CPython: str() of the exception is str(value), or the repr
+    # of the argument tuple.
+    def __init__(self, value):
+        super().__init__(str(value))
+        self.python_type = self.__class__._pytype
+
+    def __init__(self, first, second, *rest):
+        super().__init__(repr((first, second) + rest))
+        self.python_type = self.__class__._pytype
+
 class LookupError(Exception):
     _pytype: ClassVar[cobj] = cobj()
     def __init__(self, message: str = ""):
