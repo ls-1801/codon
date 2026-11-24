@@ -248,6 +248,78 @@ class Set:
     def issuperset(self, other: Set[K]) -> bool:
         return other.issubset(self)
 
+    # NES: as in Python, the set methods take any iterable, not only a set (`frozenset("0123").issuperset("12")`).
+    # These overloads build a set from the iterable; they do not call the Set overloads by name, which a set
+    # argument could resolve to these again.
+    def difference(self, other: Generator[K]) -> Set[K]:
+        o = Set[K](other)
+        s = Set[K]()
+        for a in self:
+            if a not in o:
+                s.add(a)
+        return s
+
+    def difference_update(self, other: Generator[K]):
+        for a in other:
+            self.discard(a)
+
+    def intersection(self, other: Generator[K]) -> Set[K]:
+        s = Set[K]()
+        for a in other:
+            if a in self:
+                s.add(a)
+        return s
+
+    def intersection_update(self, other: Generator[K]):
+        o = Set[K](other)
+        for a in self.copy():
+            if a not in o:
+                self.discard(a)
+
+    def symmetric_difference(self, other: Generator[K]) -> Set[K]:
+        o = Set[K](other)
+        s = Set[K]()
+        for a in self:
+            if a not in o:
+                s.add(a)
+        for a in o:
+            if a not in self:
+                s.add(a)
+        return s
+
+    def symmetric_difference_update(self, other: Generator[K]):
+        o = Set[K](other)
+        for a in o:
+            if a in self:
+                self.discard(a)
+            else:
+                self.add(a)
+
+    def union(self, other: Generator[K]) -> Set[K]:
+        s = self.copy()
+        for a in other:
+            s.add(a)
+        return s
+
+    def isdisjoint(self, other: Generator[K]) -> bool:
+        for a in other:
+            if a in self:
+                return False
+        return True
+
+    def issubset(self, other: Generator[K]) -> bool:
+        o = Set[K](other)
+        for a in self:
+            if a not in o:
+                return False
+        return True
+
+    def issuperset(self, other: Generator[K]) -> bool:
+        for a in other:
+            if a not in self:
+                return False
+        return True
+
     def clear(self):
         self._kh_clear()
 
