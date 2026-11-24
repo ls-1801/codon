@@ -816,7 +816,18 @@ bool TypecheckVisitor::typecheckCallArgs(FuncType *calleeFn, std::vector<CallArg
             // Defaults should not be unified (yet)!
             replacements.push_back(extractFuncArgType(calleeFn, si));
           } else {
-            if (wrapExpr(&args[si].value, extractFuncArgType(calleeFn, si), calleeFn)) {
+            // NES: in a Python function, an argument that has no type yet does not take the type of a concrete
+            // parameter while other information may still come: `o = m.group(1); f(o)` with `f(x: str)` bound o to str
+            // before m.group(1) was typed as Optional[str], and failed. The call waits; when nothing else changes, the
+            // deferred bindings happen as before (bindIntReturns).
+            auto argType = args[si].getExpr()->getType();
+            auto paramType = extractFuncArgType(calleeFn, si);
+            if (ctx->inFunction() && !ctx->getBase()->bindIntReturns && argType->getUnbound() &&
+                !argType->getStaticKind() && paramType->getClass() && paramType->canRealize() &&
+                !paramType->is(TYPE_OPTIONAL) && inPythonFile()) {
+              ctx->getBase()->intReturnsDeferred = true;
+              wrappingDone = false;
+            } else if (wrapExpr(&args[si].value, extractFuncArgType(calleeFn, si), calleeFn)) {
               unify(args[si].getExpr()->getType(), extractFuncArgType(calleeFn, si));
             } else {
               wrappingDone = false;

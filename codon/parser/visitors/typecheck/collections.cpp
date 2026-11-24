@@ -375,9 +375,29 @@ Expr *TypecheckVisitor::transformComprehension(const std::string &type,
   // ancestor of all types in the collection. For example, `type([1, 1.2]) == type([1.2,
   // 1]) == float` because float is an "ancestor" of int.
   // TODO: use wrapExpr...
-  auto superTyp = [&](ClassType *collectionCls, ClassType *ti) -> TypePtr {
+  std::function<TypePtr(ClassType *, ClassType *)> superTyp = [&](ClassType *collectionCls,
+                                                                  ClassType *ti) -> TypePtr {
     if (!collectionCls)
       return ti->shared_from_this();
+    // NES: tuples of one size, element by element (`[("a", None), ("b", "x")]` is a list of Tuple[str, Optional[str]]).
+    if (ti && collectionCls->is(TYPE_TUPLE) && ti->is(TYPE_TUPLE) && collectionCls->size() == ti->size() &&
+        collectionCls->size() > 0 && collectionCls->name != ti->name) {
+      // (differently named tuple classes are not merged)
+    } else if (ti && collectionCls->is(TYPE_TUPLE) && ti->is(TYPE_TUPLE) && collectionCls->size() == ti->size() &&
+               collectionCls->size() > 0 && endswith(getSrcInfo().file, ".py")) {
+      std::vector<TypePtr> elements;
+      bool changed = false;
+      for (size_t i = 0; i < ti->size(); i++) {
+        auto a = (*collectionCls)[i]->getClass();
+        auto b = (*ti)[i]->getClass();
+        TypePtr st = (a && b && a->realizedName() != b->realizedName()) ? superTyp(a, b) : nullptr;
+        changed |= st != nullptr;
+        elements.push_back(st ? st : (*collectionCls)[i]->shared_from_this());
+      }
+      if (changed)
+        return instantiateType(generateTuple(elements.size()), ctx->cache->castVectorPtr(elements));
+      return nullptr;
+    }
     if (collectionCls->is("int") && ti->is("float")) {
       // Rule: int derives from float
       return ti->shared_from_this();

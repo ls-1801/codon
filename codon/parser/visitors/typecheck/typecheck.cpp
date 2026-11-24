@@ -734,6 +734,40 @@ TypecheckVisitor::canWrapExpr(Type *exprType, Type *expectedType, FuncType *call
     };
   }
 
+  // NES: a tuple whose element is a T where the expected tuple has an Optional[T] (a list `[("a", None), ("b", "x")]`,
+  // or a returned tuple) wraps that element: `(t := value; (t[0], Optional(t[1])))`.
+  else if (expectedClass && exprClass && expectedClass->is(TYPE_TUPLE) && exprClass->is(TYPE_TUPLE) &&
+           expectedClass->size() == exprClass->size() && exprClass->size() > 0 && inPythonFile() &&
+           [&]() {
+             for (size_t i = 0; i < exprClass->size(); i++) {
+               auto e = (*expectedClass)[i]->getClass();
+               auto x = (*exprClass)[i]->getClass();
+               if (e && x && e->is(TYPE_OPTIONAL) && !x->is(TYPE_OPTIONAL) && !x->is("NoneType"))
+                 return true;
+             }
+             return false;
+           }()) {
+    std::vector<bool> wrap;
+    std::vector<TypePtr> elements;
+    for (size_t i = 0; i < exprClass->size(); i++) {
+      auto e = (*expectedClass)[i]->getClass();
+      auto x = (*exprClass)[i]->getClass();
+      wrap.push_back(e && x && e->is(TYPE_OPTIONAL) && !x->is(TYPE_OPTIONAL) && !x->is("NoneType"));
+      elements.push_back(wrap.back() ? instantiateType(getStdLibType(TYPE_OPTIONAL), std::vector<Type *>{x})
+                                     : (*exprClass)[i]->shared_from_this());
+    }
+    type = instantiateType(generateTuple(elements.size()), ctx->cache->castVectorPtr(elements));
+    fn = [this, wrap](Expr *expr) -> Expr * {
+      auto var = getTemporaryVar("tuple");
+      std::vector<Expr *> items;
+      for (size_t i = 0; i < wrap.size(); i++) {
+        Expr *item = N<IndexExpr>(N<IdExpr>(var), N<IntExpr>(i));
+        items.push_back(wrap[i] ? N<CallExpr>(N<IdExpr>(TYPE_OPTIONAL), item) : item);
+      }
+      return N<StmtExpr>(N<AssignStmt>(N<IdExpr>(var), expr), N<TupleExpr>(items));
+    };
+  }
+
   else if (expectedClass && expectedClass->is(TYPE_OPTIONAL) && exprClass &&
            !exprClass->is(expectedClass->name)) {
     type =
