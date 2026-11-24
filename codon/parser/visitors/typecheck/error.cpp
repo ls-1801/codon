@@ -296,7 +296,9 @@ void TypecheckVisitor::visit(ThrowStmt *stmt) {
         stmt->getExpr(), N<StringExpr>(ctx->getBase()->name),
         N<StringExpr>(stmt->getSrcInfo().file), N<IntExpr>(stmt->getSrcInfo().line),
         N<IntExpr>(stmt->getSrcInfo().col),
-        stmt->getFrom()
+        // NES: `raise X from None` leaves the cause None, as a plain `raise` does (Codon keeps no implicit context to
+        // suppress); the cast of None to BaseException fails in LLVM.
+        stmt->getFrom() && !cast<NoneExpr>(stmt->getFrom())
             ? N<CallExpr>(N<DotExpr>(N<IdExpr>("Super"), "_super"), stmt->getFrom(),
                           N<IdExpr>(getMangledClass("std.internal.types.error",
                                                     "BaseException")))

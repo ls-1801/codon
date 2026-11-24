@@ -250,6 +250,25 @@ struct NesNameBindings : public ReplacingCallbackASTVisitor {
   }
 };
 
+/// Whether a function assigns None to a name (`x = None`).
+struct NesNoneAssignments : public ReplacingCallbackASTVisitor {
+  std::string name;
+  bool found = false;
+  Expr *transform(Expr *e) override {
+    if (e)
+      e->accept(*this);
+    return e;
+  }
+  Stmt *transform(Stmt *s) override {
+    if (!s)
+      return s;
+    if (auto a = cast<AssignStmt>(s); a && isId(a->getLhs(), name) && cast<NoneExpr>(a->getRhs()))
+      found = true;
+    s->accept(*this);
+    return s;
+  }
+};
+
 struct NesSuperMembers : public ReplacingCallbackASTVisitor {
   std::set<std::string> members;
   Expr *transform(Expr *e) override {
@@ -444,9 +463,30 @@ Stmt *TypecheckVisitor::transformAssignment(AssignStmt *stmt, bool mustExist) {
         nb.transform(fn->origAst->getSuite());
         nesStaticCandidate = nb.count == 1;
       }
+  // NES: the first binding of x in a Python function that also has `x = None` makes x an Optional[T] (CPython's
+  // urllib.parse: `hostname, _, port = hostinfo.partition(':')`, then `if not port: port = None`). Before, x was a T,
+  // and `x = None` failed at run time when it unwrapped the None.
+  bool nesOptionalCandidate = false;
+  if (!typeExpr && stmt->getRhs() && !cast<NoneExpr>(stmt->getRhs()) && ctx->inFunction() &&
+      endswith(stmt->getSrcInfo().file, ".py"))
+    if (auto fn = getFunction(ctx->getBase()->name); fn && fn->origAst) {
+      NesNoneAssignments na;
+      na.name = e->getValue();
+      na.transform(fn->origAst->getSuite());
+      nesOptionalCandidate = na.found;
+    }
   stmt->rhs = transform(stmt->getRhs(), true);
   if (nesStaticCandidate && stmt->getRhs()->getType()->getStaticKind() == LiteralKind::Bool)
     typeExpr = transformType(N<IndexExpr>(N<IdExpr>("Literal"), N<IdExpr>("bool")));
+  if (nesOptionalCandidate && !typeExpr) {
+    auto t = stmt->getRhs()->getType();
+    if (auto st = t->getStatic())
+      t = st->getNonStaticType();
+    auto c = t->getClass();
+    if (c && c->canRealize() && !c->is(TYPE_OPTIONAL) && !c->is("NoneType") && !t->getFunc() && !c->is(TYPE_TYPE))
+      typeExpr = transformType(
+          N<IndexExpr>(N<IdExpr>(TYPE_OPTIONAL), N<IdExpr>(realize(c)->realizedName())));
+  }
   stmt->type = typeExpr;
 
   // Generate new canonical variable name for this assignment and add it to the context
@@ -459,7 +499,19 @@ Stmt *TypecheckVisitor::transformAssignment(AssignStmt *stmt, bool mustExist) {
                                 : instantiateUnbound(assign->getLhs()->getSrcInfo()));
   if (isThreadLocal)
     assign->setThreadLocal();
-  if (!stmt->getRhs() && !stmt->getTypeExpr() && ctx->find("NoneType")) {
+  // NES: a declaration (a variable bound in several branches) of a name that the Python function also sets to None is an
+  // Optional whose content type the first value decides (see nesOptionalCandidate).
+  bool nesOptionalDeclaration = false;
+  if (!stmt->getRhs() && !stmt->getTypeExpr() && ctx->inFunction() && endswith(stmt->getSrcInfo().file, ".py"))
+    if (auto fn = getFunction(ctx->getBase()->name); fn && fn->origAst) {
+      NesNoneAssignments na;
+      na.name = e->getValue();
+      na.transform(fn->origAst->getSuite());
+      nesOptionalDeclaration = na.found;
+    }
+  if (nesOptionalDeclaration) {
+    unify(assign->getLhs()->getType(), instantiateType(getStdLibType(TYPE_OPTIONAL)));
+  } else if (!stmt->getRhs() && !stmt->getTypeExpr() && ctx->find("NoneType")) {
     // All declarations that are not handled are to be marked with NoneType later on
     // (useful for dangling declarations that are not initialized afterwards due to
     //  static check)
