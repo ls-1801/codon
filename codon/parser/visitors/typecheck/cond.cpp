@@ -36,11 +36,26 @@ void TypecheckVisitor::visit(RangeExpr *expr) {
 /// Typecheck if expressions. Evaluate static if blocks if possible.
 /// Also wrap conditional expressions to match each other. See @c wrapExpr for more
 /// details.
+/// NES: whether an expression is a name whose type only holds None: NoneType, or Optional[...NoneType] (a parameter whose
+/// default is None, when the call omits it).
+static bool nesAlwaysNone(Expr *e) {
+  if (!cast<IdExpr>(e) || !e->getType())
+    return false;
+  auto c = e->getType()->getClass();
+  while (c && c->is(TYPE_OPTIONAL) && !c->generics.empty())
+    c = c->generics[0].getType()->getClass();
+  return c && c->is("NoneType");
+}
+
 void TypecheckVisitor::visit(IfExpr *expr) {
   auto oldExpectedType = getStdLibType("bool")->shared_from_this();
   std::swap(ctx->expectedType, oldExpectedType);
   expr->cond = transform(expr->getCond());
   std::swap(ctx->expectedType, oldExpectedType);
+  // NES: in a Python file, a condition that is always None is false, so the other branch need not type check
+  // (`set(p) if p else set()` for a parameter p whose default is None).
+  if (inPythonFile() && nesAlwaysNone(expr->getCond()))
+    expr->cond = transform(N<BoolExpr>(false));
 
   // Static if evaluation
   if (expr->getCond()->getType()->getStaticKind()) {
@@ -88,6 +103,9 @@ void TypecheckVisitor::visit(IfStmt *stmt) {
   std::swap(ctx->expectedType, oldExpectedType);
   stmt->cond = transform(stmt->getCond());
   std::swap(ctx->expectedType, oldExpectedType);
+  // NES: as for IfExpr, a condition that is always None is false.
+  if (inPythonFile() && nesAlwaysNone(stmt->getCond()))
+    stmt->cond = transform(N<BoolExpr>(false));
 
   // Static if evaluation
   if (stmt->getCond()->getType()->getStaticKind()) {

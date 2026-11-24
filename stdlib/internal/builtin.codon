@@ -644,3 +644,44 @@ def _jit_display(x, s: Literal[str], bundle: Optional[Set[str]] = None):
         print(x.__repr__(), end='')
     elif hasattr(x, "__str__"):
         print(x.__str__(), end='')
+
+
+# NES: the value of a parameter whose default is None after `if p is None: p = E` (see the scoping visitor's
+# nesRebindNoneDefaults). `make` computes E. For an argument that is always None (the default) the result is E's type; for
+# an Optional argument it is checked at run time; any other argument is returned as it is.
+def __nes_none_default__(arg, make):
+    if isinstance(arg, NoneType):
+        return make()
+    elif isinstance(arg, Optional):
+        return __nes_none_default_optional__(arg, make)
+    else:
+        return arg
+
+
+def __nes_none_default_optional__(arg: Optional[T], make, T: type):
+    if T is NoneType:
+        return make()
+    else:
+        if arg is None:
+            return make()
+        return arg.__val__()
+
+
+# NES: `p or E` for a parameter whose default is None.
+def __nes_or_default__(arg, make):
+    if isinstance(arg, NoneType):
+        return make()
+    elif isinstance(arg, Optional):
+        return __nes_or_default_optional__(arg, make)
+    else:
+        return arg if arg else make()
+
+
+def __nes_or_default_optional__(arg: Optional[T], make, T: type):
+    if T is NoneType:
+        return make()
+    else:
+        if arg is None:
+            return make()
+        value = arg.__val__()
+        return value if value else make()

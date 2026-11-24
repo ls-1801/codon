@@ -231,3 +231,8 @@ class NoneType:
 
     def __repr__(self) -> str:
         return "None"
+
+    # NES: hash(None) as in Python, so that an empty set or dict whose element type is never fixed (Set[NoneType], e.g.
+    # `set([])` in a function whose caller adds nothing) can be realized.
+    def __hash__(self) -> int:
+        return 0x4F8B1C3A

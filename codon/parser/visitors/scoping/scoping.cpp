@@ -578,11 +578,193 @@ void ScopingVisitor::nesConditionalDefs(Stmt *body) {
   });
 }
 
+namespace {
+/// NES: renames a name in an AST, except in nested functions and lambdas that have a parameter of that name.
+struct NesRename : public ReplacingCallbackASTVisitor {
+  Cache *cache = nullptr;
+  std::string from, to;
+  Expr *transform(Expr *e) override {
+    if (!e)
+      return e;
+    if (auto id = cast<IdExpr>(e); id && id->getValue() == from) {
+      auto renamed = cache->N<IdExpr>(to);
+      renamed->setSrcInfo(e->getSrcInfo());
+      return renamed;
+    }
+    if (auto l = cast<LambdaExpr>(e))
+      for (auto &p : *l)
+        if (p.getName() == from)
+          return e;
+    e->accept(*this);
+    return e;
+  }
+  Stmt *transform(Stmt *s) override {
+    if (!s)
+      return s;
+    if (auto f = cast<FunctionStmt>(s))
+      for (auto &p : *f)
+        if (p.getName() == from)
+          return s;
+    s->accept(*this);
+    return s;
+  }
+};
+
+/// NES: whether a nested function, lambda or class mentions a name (a closure that would see a later rebinding).
+struct NesClosureMentions : public ReplacingCallbackASTVisitor {
+  std::string name;
+  int depth = 0;
+  bool found = false;
+  Expr *transform(Expr *e) override {
+    if (!e)
+      return e;
+    if (depth > 0 && isId(e, name))
+      found = true;
+    bool nested = cast<LambdaExpr>(e) != nullptr;
+    depth += nested;
+    e->accept(*this);
+    depth -= nested;
+    return e;
+  }
+  Stmt *transform(Stmt *s) override {
+    if (!s)
+      return s;
+    bool nested = cast<FunctionStmt>(s) || cast<ClassStmt>(s);
+    depth += nested;
+    s->accept(*this);
+    depth -= nested;
+    return s;
+  }
+};
+
+/// NES: whether a statement binds a name anywhere (assignment target, loop variable, `:=`, with ... as).
+struct NesBinds : public ReplacingCallbackASTVisitor {
+  std::string name;
+  bool found = false;
+  void target(Expr *e) {
+    if (!e)
+      return;
+    if (isId(e, name))
+      found = true;
+    else if (auto t = cast<TupleExpr>(e))
+      for (auto *i : *t)
+        target(i);
+    else if (auto l = cast<ListExpr>(e))
+      for (auto *i : *l)
+        target(i);
+    else if (auto st = cast<StarExpr>(e))
+      target(st->getExpr());
+  }
+  Expr *transform(Expr *e) override {
+    if (!e)
+      return e;
+    if (auto a = cast<AssignExpr>(e))
+      target(a->getVar());
+    e->accept(*this);
+    return e;
+  }
+  Stmt *transform(Stmt *s) override {
+    if (!s)
+      return s;
+    if (auto a = cast<AssignStmt>(s))
+      target(a->getLhs());
+    else if (auto f = cast<ForStmt>(s))
+      target(f->getVar());
+    else if (auto w = cast<WithStmt>(s))
+      for (auto &v : w->getVars())
+        found |= v == name;
+    s->accept(*this);
+    return s;
+  }
+};
+
+bool nesIsNoneTest(Expr *e, const std::string &name, bool negated) {
+  auto b = cast<BinaryExpr>(e);
+  return b && b->getOp() == (negated ? "is not" : "is") && isId(b->getLhs(), name) && cast<NoneExpr>(b->getRhs());
+}
+
+/// NES: a parameter whose default is None and that the function rebinds (`if p is None: p = []`, `p = p or {}`,
+/// `p = set(p) if p else set()`) has the type NoneType when the call omits it, so the rebinding would change its type.
+/// In a Python file, the first top-level rebinding of such a parameter becomes a new variable, and the rest of the
+/// function uses it:
+///   `if p is None: p = E`                   -> `p' = __nes_none_default__(p, lambda: E)`
+///   `p = E if p is None else p` (or `p if p is not None else E`) -> the same
+///   `p = p or E`                            -> `p' = __nes_or_default__(p, lambda: E)`
+///   `p = E` (any other right-hand side)     -> `p' = E`
+/// Not when a nested function, lambda or class before the rebinding mentions p (it would see the new value in Python),
+/// nor when an earlier statement binds p (in a branch or loop).
+void nesRebindNoneDefaults(Cache *cache, FunctionStmt *f) {
+  auto suite = cast<SuiteStmt>(f->getSuite());
+  if (!suite)
+    return;
+  // The body of a function can be a suite in a suite (a docstring and the statements).
+  while (suite->size() == 1 && cast<SuiteStmt>((*suite)[0]))
+    suite = cast<SuiteStmt>((*suite)[0]);
+  for (auto &param : *f) {
+    if (!param.isValue() || param.getType() || !cast<NoneExpr>(param.getDefault()) ||
+        startswith(param.getName(), "*"))
+      continue;
+    auto p = param.getName();
+    for (size_t i = 0; i < suite->size(); i++) {
+      auto *s = (*suite)[i];
+      Expr *value = nullptr;
+      auto lambda = [&](Expr *e) { return cache->N<LambdaExpr>(std::vector<Param>{}, e); };
+      if (auto a = cast<AssignStmt>(s); a && a->isAssignment() && !a->getTypeExpr() && isId(a->getLhs(), p) &&
+                                        a->getRhs()) {
+        value = a->getRhs();
+        auto ie = cast<IfExpr>(value);
+        auto bo = cast<BinaryExpr>(value);
+        if (ie && nesIsNoneTest(ie->getCond(), p, false) && isId(ie->getElse(), p))
+          value = cache->N<CallExpr>(cache->N<IdExpr>("__nes_none_default__"), cache->N<IdExpr>(p), lambda(ie->getIf()));
+        else if (ie && nesIsNoneTest(ie->getCond(), p, true) && isId(ie->getIf(), p))
+          value = cache->N<CallExpr>(cache->N<IdExpr>("__nes_none_default__"), cache->N<IdExpr>(p), lambda(ie->getElse()));
+        else if (bo && bo->getOp() == "||" && isId(bo->getLhs(), p))
+          value = cache->N<CallExpr>(cache->N<IdExpr>("__nes_or_default__"), cache->N<IdExpr>(p), lambda(bo->getRhs()));
+      } else if (auto ifs = cast<IfStmt>(s); ifs && !ifs->getElse() && nesIsNoneTest(ifs->getCond(), p, false)) {
+        SuiteStmt *body = ifs->getIf();
+        while (body && body->size() == 1 && cast<SuiteStmt>((*body)[0]))
+          body = cast<SuiteStmt>((*body)[0]);
+        auto a = body && body->size() == 1 ? cast<AssignStmt>((*body)[0]) : nullptr;
+        if (a && a->isAssignment() && !a->getTypeExpr() && isId(a->getLhs(), p) && a->getRhs())
+          value = cache->N<CallExpr>(cache->N<IdExpr>("__nes_none_default__"), cache->N<IdExpr>(p), lambda(a->getRhs()));
+      }
+      if (!value) {
+        NesBinds binds;
+        binds.name = p;
+        binds.transform(s);
+        if (binds.found)
+          break;
+        continue;
+      }
+      NesClosureMentions closures;
+      closures.name = p;
+      for (size_t j = 0; j < i; j++)
+        closures.transform((*suite)[j]);
+      if (closures.found)
+        break;
+      auto renamed = fmt::format("__nes_{}_{}", p, i);
+      auto assign = cache->N<AssignStmt>(cache->N<IdExpr>(renamed), value);
+      assign->setSrcInfo(s->getSrcInfo());
+      (*suite)[i] = assign;
+      NesRename rename;
+      rename.cache = cache;
+      rename.from = p;
+      rename.to = renamed;
+      for (size_t j = i + 1; j < suite->size(); j++)
+        (*suite)[j] = rename.transform((*suite)[j]);
+      break;
+    }
+  }
+}
+} // namespace
+
 void ScopingVisitor::visit(FunctionStmt *stmt) {
   // NES: forward references (string annotations) only in Python files. Codon's own files use strings as static
   // arguments in annotations (numpy: `datetime64['D', 1]`), which must stay strings.
-  if (endswith(stmt->getSrcInfo().file, ".py"))
+  if (endswith(stmt->getSrcInfo().file, ".py")) {
     TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
+    nesRebindNoneDefaults(ctx->cache, stmt);
+  }
   nesConditionalDefs(stmt->getSuite());
   // Validate
   std::vector<Expr *> newDecorators;
