@@ -206,6 +206,9 @@ struct Cache {
   std::map<std::pair<std::string, std::string>, size_t> thunkIds;
   /// NES: the record class (canonical name) of each key list of a dict literal with values of different types.
   std::unordered_map<std::string, std::string> nesRecordClasses;
+  /// NES: function-local import statements ("file:line") whose modules nesHoistFunctionImports also imports at the
+  /// start of their module, so the module initializer initializes them (NES accepts these in INLINE UDFs).
+  std::unordered_set<std::string> nesHoistedImports;
 
   struct Function {
     /// Module information

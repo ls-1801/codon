@@ -386,8 +386,8 @@ Stmt *TypecheckVisitor::transformNewImport(const ImportFile &file) {
       throw exc::ParserException(overlayOrErr.takeError());
     nesMergeOverlay(*nodeOrErr, *overlayOrErr, overlay.string());
   }
-  n = N<SuiteStmt>(n, *nodeOrErr);
   auto tv = TypecheckVisitor(ictx, preamble);
+  n = N<SuiteStmt>(n, tv.nesHoistFunctionImports(*nodeOrErr, file.path), *nodeOrErr);
   if (auto err = ScopingVisitor::apply(ctx->cache, n, &ictx->globalShadows))
     throw exc::ParserException(std::move(err));
 
@@ -424,6 +424,100 @@ Stmt *TypecheckVisitor::transformNewImport(const ImportFile &file) {
     // LOG_USER("[import] done importing {}", file.module);
   }
   return nullptr;
+}
+
+/// NES: a function-local import (`def f(): import random`) runs the module's top-level code at the first call of the
+/// function. NES runs UDF calls with a per-invocation arena that it reuses, so the module's globals would point into
+/// memory that later calls overwrite. In a .py module, every function-local import whose module resolves is also done
+/// at the start of the module, unconditionally, under a hidden name: the module initializer then initializes the
+/// imported module, and the function-local import finds it loaded (Codon emits no call, or a call that returns at the
+/// `loaded` flag). Hoisted statements are recorded in cache->nesHoistedImports as "file:line"; a statement whose module
+/// does not resolve is not hoisted, and compiling it fails as before. `from C` and `from python` imports are skipped.
+Stmt *TypecheckVisitor::nesHoistFunctionImports(Stmt *module, const std::string &path) {
+  if (!module || !endswith(path, ".py"))
+    return nullptr;
+  std::vector<ImportStmt *> found;
+  std::function<void(Stmt *, int)> walk = [&](Stmt *s, int depth) {
+    if (!s)
+      return;
+    if (auto suite = cast<SuiteStmt>(s)) {
+      for (auto *x : *suite)
+        walk(x, depth);
+    } else if (auto f = cast<FunctionStmt>(s)) {
+      walk(f->getSuite(), depth + 1);
+    } else if (auto c = cast<ClassStmt>(s)) {
+      walk(c->getSuite(), depth);
+    } else if (auto im = cast<ImportStmt>(s)) {
+      if (depth > 0)
+        found.push_back(im);
+    } else if (auto i = cast<IfStmt>(s)) {
+      walk(i->getIf(), depth);
+      walk(i->getElse(), depth);
+    } else if (auto w = cast<WhileStmt>(s)) {
+      walk(w->getSuite(), depth);
+      walk(w->getElse(), depth);
+    } else if (auto fo = cast<ForStmt>(s)) {
+      walk(fo->getSuite(), depth);
+      walk(fo->getElse(), depth);
+    } else if (auto t = cast<TryStmt>(s)) {
+      walk(t->getSuite(), depth);
+      for (auto *e : *t)
+        walk(e->getSuite(), depth);
+      walk(t->getElse(), depth);
+      walk(t->getFinally(), depth);
+    } else if (auto wi = cast<WithStmt>(s)) {
+      walk(wi->getSuite(), depth);
+    }
+  };
+  walk(module, 0);
+  if (found.empty())
+    return nullptr;
+
+  auto root = [](Expr *e) -> std::string {
+    while (auto d = cast<DotExpr>(e))
+      e = d->getExpr();
+    if (auto id = cast<IdExpr>(e))
+      return id->getValue();
+    return "";
+  };
+  auto resolves = [&](Expr *from, size_t dots) {
+    auto components = getImportPath(from, dots);
+    return getImportFile(ctx->cache, combine2(components, "/"), path, false, dots > 0) != nullptr;
+  };
+  auto hoisted = N<SuiteStmt>();
+  std::unordered_map<std::string, bool> lines;
+  for (auto *im : found) {
+    auto key = fmt::format("{}:{}", im->getSrcInfo().file, im->getSrcInfo().line);
+    auto r = im->getFrom() ? root(im->getFrom()) : "";
+    if (r == "C" || r == "python" || (im->getFrom() && cast<CallExpr>(im->getFrom()))) {
+      lines[key] = false;
+      continue;
+    }
+    bool ok = im->getFrom() && resolves(im->getFrom(), im->getDots());
+    if (ok) {
+      hoisted->addStmt(N<ImportStmt>(clone(im->getFrom()), nullptr, std::vector<Param>{}, nullptr,
+                                     fmt::format("__nes_hoisted_import_{}", ctx->cache->nesHoistedImports.size() +
+                                                                                 hoisted->size()),
+                                     im->getDots()));
+      // `from m import n` where n is a submodule: initialize n too
+      if (auto what = cast<IdExpr>(im->getWhat()); what && what->getValue() != "*") {
+        auto sub = N<DotExpr>(clone(im->getFrom()), what->getValue());
+        if (resolves(sub, im->getDots()))
+          hoisted->addStmt(N<ImportStmt>(sub, nullptr, std::vector<Param>{}, nullptr,
+                                         fmt::format("__nes_hoisted_import_{}",
+                                                     ctx->cache->nesHoistedImports.size() + hoisted->size()),
+                                         im->getDots()));
+      }
+    }
+    auto it = lines.find(key);
+    lines[key] = ok && (it == lines.end() || it->second);
+  }
+  for (auto &[key, ok] : lines)
+    if (ok)
+      ctx->cache->nesHoistedImports.insert(key);
+  for (auto *s : *hoisted)
+    s->setSrcInfo(module->getSrcInfo());
+  return hoisted->size() ? hoisted : nullptr;
 }
 
 /// NES: merge an overlay into a library module (a last resort for code that does not fit Codon's types, or that is

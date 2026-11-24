@@ -72,6 +72,8 @@ Stmt *TypecheckVisitor::apply(
   stmts.push_back(
       tv.N<AssignStmt>(tv.N<IdExpr>("__name__"), tv.N<StringExpr>(MODULE_MAIN)));
   stmts.push_back(tv.N<AssignStmt>(tv.N<IdExpr>("__file__"), tv.N<StringExpr>(file)));
+  if (auto hoisted = tv.nesHoistFunctionImports(node, file))
+    stmts.push_back(hoisted);
   stmts.push_back(node);
 
   if (auto err = ScopingVisitor::apply(cache, suite, &ctx->globalShadows))
@@ -179,6 +181,13 @@ Stmt *TypecheckVisitor::apply(const std::shared_ptr<TypeContext> &ctx, Stmt *nod
   ctx->setFilename(file);
   auto preamble = ctx->cache->N<ast::SuiteStmt>();
   auto tv = TypecheckVisitor(ctx, preamble);
+  // NES: a JIT cell (the code of a UDF) hoists its function-local imports as a module does (nesHoistFunctionImports).
+  // The cell was scoped by the caller, so only the hoisted imports are scoped here.
+  if (auto hoisted = tv.nesHoistFunctionImports(node, file)) {
+    if (auto err = ScopingVisitor::apply(ctx->cache, hoisted, &ctx->globalShadows))
+      throw exc::ParserException(std::move(err));
+    node = ctx->cache->N<SuiteStmt>(hoisted, node);
+  }
   auto n = tv.inferTypes(node, true);
   ctx->setFilename(oldFilename);
   if (!n) {
