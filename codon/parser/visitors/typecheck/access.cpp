@@ -141,7 +141,27 @@ void TypecheckVisitor::visit(DotExpr *expr) {
     resultExpr = transform(N<CallExpr>(N<IdExpr>(TYPE_TYPE), expr->getExpr()));
     return;
   }
-  expr->expr = transform(expr->getExpr());
+  {
+    // NES: `super().member` resolves to the first parent class that has the member (see transformSuper).
+    auto superCall = cast<CallExpr>(expr->getExpr());
+    bool isSuper = superCall && superCall->empty() && isId(superCall->getExpr(), "super");
+    auto oldSuperMember = ctx->nesSuperMember;
+    // A copy of the resolved method made for this class (see nesCopyAbstractReaders): `self._nes_super_<m>`.
+    if (isSuper && ctx->getBase()->type && ctx->getBase()->type->getFunc() &&
+        !ctx->getBase()->type->getFunc()->empty()) {
+      auto funcTyp = ctx->getBase()->type->getFunc();
+      if (auto selfTyp = extractFuncArgType(funcTyp)->getClass())
+        if (auto c = getClass(selfTyp); c && in(c->methods, "_nes_super_" + expr->getMember())) {
+          resultExpr = transform(N<DotExpr>(N<IdExpr>(funcTyp->ast->begin()->getName()),
+                                            "_nes_super_" + expr->getMember()));
+          return;
+        }
+    }
+    if (isSuper)
+      ctx->nesSuperMember = expr->getMember();
+    expr->expr = transform(expr->getExpr());
+    ctx->nesSuperMember = oldSuperMember;
+  }
 
   bool hasSide = hasSideEffect(expr->getExpr());
   auto wrapSide = [&](Expr *e) -> Expr * {
@@ -171,9 +191,16 @@ void TypecheckVisitor::visit(DotExpr *expr) {
   }
   // Special case: cls.__name__
   if (isTypeExpr(expr->getExpr()) && expr->getMember() == "__name__") {
-    if (realize(expr->getExpr()->getType()))
-      resultExpr =
-          wrapSide(N<StringExpr>(extractType(expr->getExpr())->prettyString()));
+    if (realize(expr->getExpr()->getType())) {
+      auto t = extractType(expr->getExpr());
+      auto name = t->prettyString();
+      // NES: the generics of a class whose fields Codon infers are the field types, not part of the Python class:
+      // its __name__ is "Hex", not "Hex[int]".
+      if (auto c = t->getClass())
+        if (auto cls = getClass(c->name); cls && cls->ast && cls->ast->hasAttribute(Attr::ClassDeduce))
+          name = getUserFacingName(getUnmangledName(c->name));
+      resultExpr = wrapSide(N<StringExpr>(name));
+    }
     return;
   }
   // Special case: cls.__mro__
@@ -242,19 +269,53 @@ void TypecheckVisitor::visit(DotExpr *expr) {
       auto inDeduceInit = ctx->inFunction() && ctx->getBase()->func &&
                           ctx->getBase()->func->hasAttribute(Attr::AllowPassThrough) &&
                           getUnmangledName(ctx->getBase()->func->getName()) == "__init__";
-      if (inDeduceInit && !isTypeExpr(expr->getExpr()) &&
-          !bestMethod->ast->hasAttribute(Attr::AllowPassThrough))
+      bool openReceiver = false;
+      if (inDeduceInit && !isTypeExpr(expr->getExpr()))
         for (auto &u : typ->getUnbounds(true))
           if (u->getLink() && u->getLink()->kind != LinkType::Generic && u->getLink()->passThrough) {
-            bestMethod->ast->setAttribute(Attr::AllowPassThrough);
+            openReceiver = true;
             break;
           }
+      if (openReceiver) {
+        bestMethod->ast->setAttribute(Attr::AllowPassThrough);
+        bestMethod->ast->setAttribute(Attr::NesOpenCallee);
+      }
 
       if (bestMethod->ast->hasAttribute(Attr::ClassMethod)) {
         // NES: classmethod: pass the class as the first argument.
         Expr *clsExpr = isTypeExpr(expr->getExpr())
                             ? expr->getExpr()
                             : N<CallExpr>(N<IdExpr>("type"), expr->getExpr());
+        // NES: `C.make(s)` on a class whose fields its __init__ infers: the field types of `cls` are open and become
+        // known only when the classmethod constructs `cls(s)`. Let them pass through, as in that __init__; they used
+        // to default to NoneType.
+        if (isTypeExpr(expr->getExpr()) && getClass(typ->name)->ast->hasAttribute(Attr::ClassDeduce)) {
+          bool open = false;
+          for (auto &u : typ->getUnbounds(false))
+            if (u->getLink() && u->getLink()->kind == LinkType::Unbound) {
+              u->getLink()->passThrough = true;
+              open = true;
+            }
+          if (open) {
+            bestMethod->ast->setAttribute(Attr::AllowPassThrough);
+            bestMethod->ast->setAttribute(Attr::NesOpenCallee);
+          }
+        }
+        // NES: `type(obj)` waits until the type of obj can be realized, and a call is done only when its arguments
+        // are: for `self._split(s)` in the __init__ that infers the fields, or `cls._parse(s)` in a classmethod called
+        // there, that is never. Pass the class with its pass-through unbounds as a finished type expression instead.
+        auto clsType = openReceiver ? expr->getExpr()->getType() : extractType(clsExpr);
+        bool passThroughOnly = (openReceiver || !clsExpr->isDone()) && clsType && !clsType->canRealize();
+        if (passThroughOnly)
+          for (auto &u : clsType->getUnbounds(true))
+            if (!u->getLink() || u->getLink()->kind == LinkType::Generic || !u->getLink()->passThrough)
+              passThroughOnly = false;
+        if (passThroughOnly) {
+          auto te = N<IdExpr>(typ->name);
+          te->setType(instantiateTypeVar(clsType));
+          te->setDone();
+          clsExpr = te;
+        }
         if (parentCall) {
           parentCall->items.insert(parentCall->items.begin(), clsExpr);
           unify(expr->getType(), e->getType());

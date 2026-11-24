@@ -63,7 +63,10 @@ struct Attr {
     ExprNoSpecial,
     TryPyVar,
     // NES: @classmethod (also StaticMethod; the first parameter is the class, a type parameter)
-    ClassMethod
+    ClassMethod,
+    // NES: a function realized with the pass-through unbounds of the __init__ that infers a class's fields (a method,
+    // classmethod or function called there). Its type check does not default them: they belong to that __init__.
+    NesOpenCallee
   };
 };
 } // namespace codon::ast

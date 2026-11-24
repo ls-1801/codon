@@ -506,6 +506,12 @@ Expr *TypecheckVisitor::transformSuper() {
   ClassType *typ = extractFuncArgType(funcTyp)->getClass();
   auto cls = getClass(typ);
   auto cands = cls->staticParentClasses;
+  // NES: as in Python, `super().member` resolves to the first class in the MRO that defines the member, not always to
+  // the first base: `class IPv6Address(_BaseV6, _BaseAddress)` finds __str__ in _BaseAddress. (A static base that
+  // is not a direct one keeps the first direct base, which inherits it.)
+  auto superMember = ctx->nesSuperMember;
+  ctx->nesSuperMember.clear();
+  types::ClassType *superBase = superMember.empty() ? nullptr : nesSuperBase(typ, superMember);
   if (cands.empty()) {
     // Dynamic inheritance: use MRO
     // TODO: maybe super() should be split into two separate functions...
@@ -513,7 +519,14 @@ Expr *TypecheckVisitor::transformSuper() {
     if (vCands.size() < 2)
       E(Error::CALL_SUPER_PARENT, getSrcInfo());
 
-    auto superTyp = instantiateType(vCands[1].get(), typ);
+    size_t pick = 1;
+    if (superBase)
+      for (size_t i = 1; i < vCands.size(); i++)
+        if (vCands[i] && vCands[i]->is(superBase->name)) {
+          pick = i;
+          break;
+        }
+    auto superTyp = instantiateType(vCands[pick].get(), typ);
     auto self = N<IdExpr>(funcTyp->ast->begin()->name);
     self->setType(typ->shared_from_this());
 
@@ -523,7 +536,13 @@ Expr *TypecheckVisitor::transformSuper() {
                                  typExpr, N<IntExpr>(1)));
   }
 
-  const auto &name = cands.front(); // the first inherited type
+  auto name = cands.front(); // the first inherited type
+  if (superBase)
+    for (auto &c : cands)
+      if (c == superBase->name) {
+        name = c;
+        break;
+      }
   auto superTyp = instantiateType(extractClassType(name), typ);
   if (typ->isRecord()) {
     // Case: tuple types. Return `tuple(obj.args...)`

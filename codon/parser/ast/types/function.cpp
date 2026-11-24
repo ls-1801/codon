@@ -111,9 +111,18 @@ bool FuncType::canRealize() const {
         if (u->getLink()->kind == LinkType::Generic || !u->getLink()->passThrough)
           return false;
     }
-  bool generics =
-      std::ranges::all_of(funcGenerics.begin(), funcGenerics.end(),
-                          [](auto &a) { return !a.type || a.type->canRealize(); });
+  // NES: with AllowPassThrough, a function generic may hold pass-through unbounds too (the `cls` of a classmethod
+  // called in the __init__ that infers the fields of cls).
+  bool generics = std::ranges::all_of(funcGenerics.begin(), funcGenerics.end(), [&](auto &a) {
+    if (!a.type || a.type->canRealize())
+      return true;
+    if (!allowPassThrough)
+      return false;
+    for (auto &u : a.type->getUnbounds(true))
+      if (u->getLink()->kind == LinkType::Generic || !u->getLink()->passThrough)
+        return false;
+    return true;
+  });
   if (generics && funcParent && !funcParent->canRealize()) {
     if (!allowPassThrough)
       return false;

@@ -173,6 +173,8 @@ struct TypeContext : public Context<TypecheckItem> {
   ImportFile moduleName = {ImportFile::PACKAGE, "", ""};
   /// Set if the standard library is currently being loaded.
   bool isStdlibLoading = false;
+  /// NES: the member of `super().member` while `super()` is transformed (see TypecheckVisitor::transformSuper).
+  std::string nesSuperMember;
 
   /// The current type-checking level (for type instantiation and generalization).
   int typecheckLevel = 0;

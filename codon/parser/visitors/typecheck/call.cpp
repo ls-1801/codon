@@ -190,6 +190,24 @@ void TypecheckVisitor::visit(CallExpr *expr) {
 
   // Typecheck arguments with the function signature
   bool done = typecheckCallArgs(calleeFn.get(), expr->items, part);
+  // NES: a Python function (from a .py file: a UDF module or a Python library, not Codon's stdlib) called with an
+  // object whose type still has pass-through unbounds, in the __init__ that infers them (`self.x = split(self, s)`):
+  // like a method called on self there, it may be realized with them open; it used to wait, and the fields defaulted
+  // to NoneType.
+  if (!part.isPartial && !calleeFn->ast->hasAttribute(Attr::AllowPassThrough) &&
+      endswith(calleeFn->ast->getSrcInfo().file, ".py") && ctx->inFunction() && ctx->getBase()->func &&
+      ctx->getBase()->func->hasAttribute(Attr::AllowPassThrough) &&
+      getUnmangledName(ctx->getBase()->func->getName()) == "__init__") {
+    bool open = false;
+    for (auto &a : *expr)
+      for (auto &u : a.getExpr()->getType()->getUnbounds(true))
+        if (u->getLink() && u->getLink()->kind != LinkType::Generic && u->getLink()->passThrough)
+          open = true;
+    if (open) {
+      calleeFn->ast->setAttribute(Attr::AllowPassThrough);
+      calleeFn->ast->setAttribute(Attr::NesOpenCallee);
+    }
+  }
   if (!part.isPartial && calleeFn->canRealize()) {
     // Previous unifications can qualify existing identifiers.
     // Transform again to get the full identifier

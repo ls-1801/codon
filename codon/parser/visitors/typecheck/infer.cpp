@@ -142,6 +142,10 @@ Stmt *TypecheckVisitor::inferTypes(Stmt *result, bool isToplevel) {
               }
             } else if (auto u = unbound->getLink()) {
               types::Type::Unification undo;
+              // NES: see Attr::NesOpenCallee
+              if (u->passThrough && ctx->getBase()->func &&
+                  ctx->getBase()->func->hasAttribute(Attr::NesOpenCallee))
+                continue;
               if (u->defaultType) {
                 if (u->defaultType->getClass()) { // type[...]
                   if (u->unify(extractClassType(u->defaultType.get()), &undo) >= 0) {
@@ -518,7 +522,15 @@ types::Type *TypecheckVisitor::realizeFunc(types::FuncType *type, bool force) {
     if (!ret) {
       realizations.erase(key);
       ParserErrors errors;
-      if (!startswith(ast->name, "%_lambda")) {
+      // NES: a function realized with the pass-through unbounds of an __init__ that infers a class's fields
+      // (Attr::NesOpenCallee) waits for that __init__ to bind them; it is realized again with the bound types,
+      // and reports its errors then.
+      bool openCallee = false;
+      if (ast->hasAttribute(Attr::NesOpenCallee))
+        for (auto &u : type->getUnbounds(true))
+          if (u->getLink() && u->getLink()->kind != LinkType::Generic && u->getLink()->passThrough)
+            openCallee = true;
+      if (!startswith(ast->name, "%_lambda") && !openCallee) {
         // Lambda typecheck failures are "ignored" as they are treated as statements,
         // not functions.
         // TODO: generalize this further.
