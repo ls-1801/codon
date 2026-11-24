@@ -46,6 +46,17 @@ void TypecheckVisitor::visit(StringExpr *expr) {
   } else {
     // NES: str and repr by their canonical names, so a user variable named str (or repr) does not take their place.
     const std::string strClass = "__nes_str__";
+    // NES: in Python files, `b'...'` is the visible bytes class (the NES compat plugin), as in Python, when one exists.
+    // Codon's own str.__prefix_b__ keeps the str. Python concatenates bytes literals only with bytes literals.
+    const bool nesBytes = endswith(expr->getSrcInfo().file, ".py") && ctx->find("bytes") &&
+                          ctx->find("bytes")->isType();
+    if (nesBytes && std::all_of(expr->begin(), expr->end(), [](auto &p) { return !p.expr && p.prefix == "b"; })) {
+      std::string value;
+      for (auto &p : *expr)
+        value += p.value;
+      resultExpr = transform(N<CallExpr>(N<IdExpr>("bytes"), N<StringExpr>(value)));
+      return;
+    }
     std::vector<Expr *> items;
     for (auto &p : *expr) {
       if (p.expr) {

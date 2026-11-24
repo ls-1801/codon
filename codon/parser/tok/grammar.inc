@@ -4942,7 +4942,13 @@ std::optional<StringExpr::String> Parser::r_string() {
         std::string prefix(s.substr(0, q));
         size_t quote = s.substr(q, 3) == "\"\"\"" || s.substr(q, 3) == "'''" ? 3 : 1;
         auto p = StringExpr::String(std::string(s.substr(q + quote, s.size() - q - 2 * quote)), prefix);
-        if (p.prefix != "r" && p.prefix != "R") {
+        // NES: raw bytes (rb, br in any case) are not unescaped and keep the prefix b; B is b.
+        std::string lower = p.prefix;
+        for (auto &c : lower) c = char(std::tolower(c));
+        if (lower == "rb" || lower == "br") {
+          p.prefix = "b";
+        } else if (lower != "r") {
+          if (lower == "b") p.prefix = "b";
           try {
             p.value = unescape(p.value);
           } catch (std::invalid_argument &) {

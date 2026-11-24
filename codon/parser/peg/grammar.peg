@@ -798,7 +798,13 @@ STRING <- <NAME? STR> {
     ac<string>(VS.size() > 1 ? V1 : V0),
     VS.size() > 1 ? ac<string>(V0) : ""
   );
-  if (p.prefix != "r" && p.prefix != "R") {
+  // NES: raw bytes (rb, br in any case) are not unescaped and keep the prefix b; B is b.
+  auto lower = p.prefix;
+  for (auto &c : lower) c = std::tolower(c);
+  if (lower == "rb" || lower == "br") {
+    p.prefix = "b";
+  } else if (lower != "r") {
+    if (lower == "b") p.prefix = "b";
     p.value = unescape(p.value);
   } else {
     p.prefix = "";
@@ -810,7 +816,9 @@ STRING__PREDICATE {
     ac<string>(VS.size() > 1 ? V1 : V0),
     VS.size() > 1 ? ac<string>(V0) : ""
   );
-  if (p.prefix != "r" && p.prefix != "R")
+  auto lower = p.prefix;
+  for (auto &c : lower) c = std::tolower(c);
+  if (lower != "r" && lower != "rb" && lower != "br")
     try {
       p.value = unescape(p.value);
     } catch (std::invalid_argument &e) {

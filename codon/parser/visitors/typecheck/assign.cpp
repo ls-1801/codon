@@ -202,6 +202,48 @@ struct NesReadsAttr : public ReplacingCallbackASTVisitor {
 };
 /// NES: the members that a method reads as `self.<member>` or `cls.<member>`.
 /// NES: the members of `super().member` in a function.
+/// Counts the bindings of a name: targets of assignments (also unpacking and in-place operators), for loops, `:=` and
+/// `with ... as`. Nested functions count too, which only makes the count larger.
+struct NesNameBindings : public ReplacingCallbackASTVisitor {
+  std::string name;
+  int count = 0;
+  void countTarget(Expr *e) {
+    if (!e)
+      return;
+    if (isId(e, name))
+      count++;
+    else if (auto t = cast<TupleExpr>(e))
+      for (auto *i : *t)
+        countTarget(i);
+    else if (auto l = cast<ListExpr>(e))
+      for (auto *i : *l)
+        countTarget(i);
+    else if (auto s = cast<StarExpr>(e))
+      countTarget(s->getExpr());
+  }
+  Expr *transform(Expr *e) override {
+    if (!e)
+      return e;
+    if (auto a = cast<AssignExpr>(e))
+      countTarget(a->getVar());
+    e->accept(*this);
+    return e;
+  }
+  Stmt *transform(Stmt *s) override {
+    if (!s)
+      return s;
+    if (auto a = cast<AssignStmt>(s))
+      countTarget(a->getLhs());
+    else if (auto f = cast<ForStmt>(s))
+      countTarget(f->getVar());
+    else if (auto w = cast<WithStmt>(s))
+      for (auto &v : w->getVars())
+        count += v == name;
+    s->accept(*this);
+    return s;
+  }
+};
+
 struct NesSuperMembers : public ReplacingCallbackASTVisitor {
   std::set<std::string> members;
   Expr *transform(Expr *e) override {
@@ -384,7 +426,21 @@ Stmt *TypecheckVisitor::transformAssignment(AssignStmt *stmt, bool mustExist) {
       return s; // delay
   }
 
+  // NES: `x = isinstance(...)` (or hasattr) in a Python function, where x has no other binding: x is a static bool, as
+  // `if isinstance(...)` is, so that `if x:` removes the branch that cannot run (CPython's urllib.parse:
+  // `str_input = isinstance(args[0], str)`).
+  bool nesStaticCandidate = false;
+  if (!typeExpr && stmt->getRhs() && ctx->inFunction() && endswith(stmt->getSrcInfo().file, ".py"))
+    if (auto c = cast<CallExpr>(stmt->getRhs()); c && (isId(c->getExpr(), "isinstance") || isId(c->getExpr(), "hasattr")))
+      if (auto fn = getFunction(ctx->getBase()->name); fn && fn->origAst) {
+        NesNameBindings nb;
+        nb.name = e->getValue();
+        nb.transform(fn->origAst->getSuite());
+        nesStaticCandidate = nb.count == 1;
+      }
   stmt->rhs = transform(stmt->getRhs(), true);
+  if (nesStaticCandidate && stmt->getRhs()->getType()->getStaticKind() == LiteralKind::Bool)
+    typeExpr = transformType(N<IndexExpr>(N<IdExpr>("Literal"), N<IdExpr>("bool")));
   stmt->type = typeExpr;
 
   // Generate new canonical variable name for this assignment and add it to the context

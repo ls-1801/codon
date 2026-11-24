@@ -130,6 +130,25 @@ void TypecheckVisitor::visit(TryStmt *stmt) {
     resultStmt = transform(fallback);
     return;
   }
+  // NES: `except (A, B) as e: body` becomes `except A as e: body` and `except B as e: body`, in this order: Python runs
+  // the first handler whose class matches, so the result is the same.
+  if (std::any_of(stmt->items.begin(), stmt->items.end(),
+                  [](ExceptStmt *c) { return cast<TupleExpr>(c->getException()) != nullptr; })) {
+    std::vector<ExceptStmt *> expanded;
+    for (auto *c : stmt->items) {
+      auto t = cast<TupleExpr>(c->getException());
+      if (!t) {
+        expanded.push_back(c);
+        continue;
+      }
+      for (auto *x : *t) {
+        auto n = cast<ExceptStmt>(clone(c));
+        n->exc = clone(x);
+        expanded.push_back(n);
+      }
+    }
+    stmt->items = expanded;
+  }
   ctx->blockLevel++;
   stmt->suite = SuiteStmt::wrap(transform(stmt->getSuite()));
   ctx->blockLevel--;
