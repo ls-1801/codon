@@ -3,6 +3,8 @@
 #include "codon/parser/ast.h"
 #include "codon/parser/cache.h"
 #include "codon/parser/common.h"
+#include "codon/parser/peg/peg.h"
+#include "codon/parser/visitors/scoping/scoping.h"
 #include "codon/parser/visitors/typecheck/typecheck.h"
 
 using namespace codon::error;
@@ -75,7 +77,169 @@ void TypecheckVisitor::visit(SetExpr *expr) {
 
 /// Transform a dictionary `{k1: v1, ..., kN: vN}` to a corresponding statement
 /// expression. See @c transformComprehension
+namespace {
+/// A Codon string literal with the bytes of value.
+std::string nesStringLiteral(const std::string &value) {
+  std::string out = "\"";
+  for (unsigned char c : value) {
+    if (c == '\\' || c == '"')
+      out += fmt::format("\\{}", static_cast<char>(c));
+    else if (c < 0x20 || c >= 0x7f)
+      out += fmt::format("\\x{:02x}", c);
+    else
+      out += static_cast<char>(c);
+  }
+  return out + "\"";
+}
+
+/// The source of a record class for a dict literal with these keys: fields _f0... of the generic types T0..., and the
+/// dict operations that a literal key selects at compile time.
+std::string nesRecordSource(const std::string &name, const std::vector<std::string> &keys) {
+  std::vector<std::string> generics, params, inits, keyLiterals, reprItems;
+  std::string getitem, setitem, contains, get;
+  for (size_t i = 0; i < keys.size(); i++) {
+    auto k = nesStringLiteral(keys[i]);
+    generics.push_back(fmt::format("T{}", i));
+    params.push_back(fmt::format("f{0}: T{0}", i));
+    inits.push_back(fmt::format("        self._f{0} = f{0}\n", i));
+    keyLiterals.push_back(k);
+    reprItems.push_back(fmt::format("repr({}) + \": \" + repr(self._f{})", k, i));
+    getitem += fmt::format("        if key == {}:\n            return self._f{}\n", k, i);
+    setitem += fmt::format("        if key == {}:\n            self._f{} = value\n            return\n", k, i);
+    contains += fmt::format("        if key == {}:\n            return True\n", k);
+    get += fmt::format("        if key == {}:\n            return self._f{}\n", k, i);
+  }
+  std::vector<std::string> fieldList, itemList;
+  for (size_t i = 0; i < keys.size(); i++) {
+    fieldList.push_back(fmt::format("self._f{}", i));
+    itemList.push_back(fmt::format("({}, self._f{})", keyLiterals[i], i));
+  }
+  std::string src;
+  src += fmt::format("class {}[{}]:\n", name, join(generics, ", "));
+  for (size_t i = 0; i < keys.size(); i++)
+    src += fmt::format("    _f{0}: T{0}\n", i);
+  src += fmt::format("\n    def __init__(self, {}):\n{}", join(params, ", "), join(inits, ""));
+  src += "\n    def __getitem__(self, key: Literal[str]):\n" + getitem + "        raise KeyError(repr(key))\n";
+  src += "\n    def __setitem__(self, key: Literal[str], value):\n" + setitem +
+         "        compile_error(\"a dict with values of different types cannot get a new key\")\n";
+  src += "\n    def __contains__(self, key: Literal[str]) -> bool:\n" + contains + "        return False\n";
+  src += fmt::format("\n    def __contains__(self, key: str) -> bool:\n        return key in ({},)\n",
+                     join(keyLiterals, ", "));
+  src += "\n    def get(self, key: Literal[str], default = None):\n" + get + "        return default\n";
+  src += fmt::format("\n    def __len__(self) -> int:\n        return {}\n", keys.size());
+  src += fmt::format("\n    def keys(self) -> List[str]:\n        return [{}]\n", join(keyLiterals, ", "));
+  src += fmt::format("\n    def __iter__(self) -> Generator[str]:\n        yield from [{}]\n",
+                     join(keyLiterals, ", "));
+  // values() and items() are tuples: a loop over them is unrolled per value type.
+  src += fmt::format("\n    def values(self):\n        return ({},)\n", join(fieldList, ", "));
+  src += fmt::format("\n    def items(self):\n        return ({},)\n", join(itemList, ", "));
+  src += fmt::format("\n    def __repr__(self) -> str:\n        return \"{{\" + \", \".join([{}]) + \"}}\"\n",
+                     join(reprItems, ", "));
+  src += "\n    def __str__(self) -> str:\n        return self.__repr__()\n";
+  src += fmt::format("\n    def __as__(self, T: type):\n        return T({})\n", join(fieldList, ", "));
+  src += fmt::format("\n    def _nes_record_keys(self) -> List[str]:\n        return [{}]\n",
+                     join(keyLiterals, ", "));
+  return src;
+}
+} // namespace
+
+/// NES: a dict literal in a Python file whose keys are distinct string literals and whose values have types that do not
+/// unify (`{"price": "$12", "sqft": 1200}`, the rows of the tuplex UDFs) is a record: a class with a field per key, whose
+/// `row["sqft"]` (a literal key) has the type of that value. Codon's Dict has one value type, so such a literal did not
+/// compile. A literal whose values unify stays a Dict.
+Expr *TypecheckVisitor::transformNesRecord(DictExpr *expr, bool *delay) {
+  if (!endswith(expr->getSrcInfo().file, ".py") || expr->items.size() < 2)
+    return nullptr;
+  std::vector<std::string> keys;
+  for (auto *i : expr->items) {
+    auto t = cast<TupleExpr>(i);
+    if (!t || t->size() != 2)
+      return nullptr;
+    auto k = cast<StringExpr>((*t)[0]);
+    if (!k || !k->isSimple() || std::ranges::find(keys, k->getValue()) != keys.end())
+      return nullptr;
+    keys.push_back(k->getValue());
+  }
+  std::vector<types::ClassType *> valueTypes;
+  bool allKnown = true;
+  for (auto *i : expr->items) {
+    auto t = cast<TupleExpr>(i);
+    (*t)[1] = transform((*t)[1]);
+    // A value without a class is not typed yet; Codon's Dict path waits for it as well. A class with open generics
+    // (e.g. List[T] of `[]`) is enough to decide, and the record's constructor infers the rest.
+    auto vt = (*t)[1]->getClassType();
+    // A literal has a static type (Literal[int] 1, Literal[int] 2, ...); its class is the non-static one.
+    if (auto st = (*t)[1]->getType()->getStatic())
+      vt = st->getNonStaticType()->getClass();
+    if (!vt)
+      allKnown = false;
+    else
+      valueTypes.push_back(vt);
+  }
+  if (!allKnown) {
+    *delay = true;
+    return nullptr;
+  }
+  auto compatible = [&](types::ClassType *a, types::ClassType *b) {
+    // None fits every type; Optional[T] fits what T fits.
+    if (a->is("NoneType") || b->is("NoneType"))
+      return true;
+    if (a->is(TYPE_OPTIONAL))
+      a = extractClassGeneric(a)->getClass();
+    if (b->is(TYPE_OPTIONAL))
+      b = extractClassGeneric(b)->getClass();
+    if (!a || !b || a->is("NoneType") || b->is("NoneType"))
+      return true;
+    if ((a->is("int") && b->is("float")) || (a->is("float") && b->is("int")))
+      return true;
+    types::Type::Unification us;
+    auto score = a->unify(b, &us);
+    us.undo();
+    return score >= 0;
+  };
+  bool mixed = false;
+  for (size_t i = 0; i < valueTypes.size() && !mixed; i++)
+    for (size_t j = i + 1; j < valueTypes.size() && !mixed; j++)
+      mixed = !compatible(valueTypes[i], valueTypes[j]);
+  if (!mixed)
+    return nullptr; // a Dict, as before
+
+  // One class per key list: literals with the same keys (e.g. the returns of one function) have the same class, and a
+  // record converts to another instance of it (__as__, e.g. str fields to Optional[str] fields).
+  auto signature = join(keys, "\x1f");
+  std::string canonical;
+  if (auto c = in(ctx->cache->nesRecordClasses, signature)) {
+    canonical = *c;
+  } else {
+    auto name = fmt::format("_NesRecord{}", ctx->cache->nesRecordClasses.size());
+    auto code = nesRecordSource(name, keys);
+    auto stmtOrErr = parseCode(ctx->cache, expr->getSrcInfo().file, code, expr->getSrcInfo().line);
+    if (!stmtOrErr)
+      throw exc::ParserException(stmtOrErr.takeError());
+    auto cls = N<SuiteStmt>(*stmtOrErr);
+    if (auto err = ast::ScopingVisitor::apply(ctx->cache, cls))
+      throw exc::ParserException(std::move(err));
+    prependStmts->push_back(transform(cls));
+    auto val = ctx->find(name);
+    seqassert(val && val->isType(), "record class {} not found", name);
+    canonical = val->canonicalName;
+    ctx->cache->nesRecordClasses[signature] = canonical;
+  }
+  std::vector<Expr *> args;
+  for (auto *i : expr->items)
+    args.push_back((*cast<TupleExpr>(i))[1]);
+  return transform(N<CallExpr>(N<IdExpr>(canonical), args));
+}
+
 void TypecheckVisitor::visit(DictExpr *expr) {
+  bool delay = false;
+  if ((resultExpr = transformNesRecord(expr, &delay)))
+    return;
+  if (delay) {
+    if (!expr->getType())
+      expr->setType(instantiateUnbound());
+    return;
+  }
   expr->setType(instantiateUnbound());
   auto name = getStdLibType("Dict")->name;
   if ((resultExpr = transformComprehension(name, "__setitem__", expr->items))) {

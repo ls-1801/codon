@@ -388,6 +388,8 @@ public:
   bool inUserCode() const;
   /// NES: user code or a Python module (.py), e.g. a pure-Python library on NES_CODON_PYTHON_PATH.
   bool inPythonFile() const;
+  /// NES: a dict literal with literal keys and values of different types as a record class.
+  Expr *transformNesRecord(DictExpr *expr, bool *delay);
   /// Whether a function body (without nested functions and classes) returns None, and whether it returns another value.
   static std::pair<bool, bool> returnKinds(Stmt *suite);
   Expr *transformStaticLen(CallExpr *);

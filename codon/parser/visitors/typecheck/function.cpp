@@ -176,7 +176,11 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
         auto targetType = returnType;
         if (returnType->is(TYPE_OPTIONAL))
           targetType = extractClassGeneric(returnType)->getClass();
-        if (score < 0 && convertedType && targetType && !targetType->is(convertedType->name) &&
+        // NES: also between instances of one generic class (records of dict literals: str to Optional[str] fields).
+        if (score < 0 && convertedType && targetType &&
+            (!targetType->is(convertedType->name) ||
+             (targetType->canRealize() && convertedType->canRealize() &&
+              targetType->realizedName() != convertedType->realizedName())) &&
             !findMethod(convertedType, "__as__").empty()) {
           if (valueType->is(TYPE_OPTIONAL) && returnType->is(TYPE_OPTIONAL)) {
             // `(v := value; None if v is None else Optional(v.__val__().__as__(X)))`

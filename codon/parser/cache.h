@@ -204,6 +204,8 @@ struct Cache {
   Class *getClass(const types::ClassType *);
 
   std::map<std::pair<std::string, std::string>, size_t> thunkIds;
+  /// NES: the record class (canonical name) of each key list of a dict literal with values of different types.
+  std::unordered_map<std::string, std::string> nesRecordClasses;
 
   struct Function {
     /// Module information
