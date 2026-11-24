@@ -106,6 +106,11 @@ struct TypeContext : public Context<TypecheckItem> {
     /// progress, so that a return of a float elsewhere makes the return type float (Python mixes them).
     bool intReturnsDeferred = false;
     bool bindIntReturns = false;
+    /// NES: union return types. The value returns in the function's source (-1: not counted yet), the type of each
+    /// return seen while the return type is open, and the decision: 0 undecided, 1 as before, 2 a union.
+    int nesReturns = -1;
+    std::unordered_map<Stmt *, types::TypePtr> nesReturnTypes;
+    int nesReturnDecision = 0;
     /// Only set for functions.
     FunctionStmt *func = nullptr;
     Stmt *suite = nullptr;

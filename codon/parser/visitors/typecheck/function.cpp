@@ -98,6 +98,22 @@ void TypecheckVisitor::visit(AwaitExpr *expr) {
 /// Typecheck return statements. Empty return is transformed to `return NoneType()`.
 /// Also partialize functions if they are being returned.
 /// See @c wrapExpr for more details.
+namespace {
+/// NES: counts the `return value` statements of a function body, without nested functions and classes.
+struct NesReturnCounter : public ReplacingCallbackASTVisitor {
+  int count = 0;
+  Expr *transform(Expr *e) override { return e; }
+  Stmt *transform(Stmt *s) override {
+    if (!s || cast<FunctionStmt>(s) || cast<ClassStmt>(s))
+      return s;
+    if (auto r = cast<ReturnStmt>(s); r && r->getExpr())
+      count++;
+    s->accept(*this);
+    return s;
+  }
+};
+} // namespace
+
 void TypecheckVisitor::visit(ReturnStmt *stmt) {
   if (stmt->hasAttribute(Attr::Internal)) {
     stmt->expr = transform(N<CallExpr>(
@@ -125,6 +141,62 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
     if (!isAsync && stmt->getExpr()->getType()->getUnbound() &&
         ctx->getBase()->returnType->getUnbound() && inUserCode())
       return;
+
+    // NES: union return types. In a Python function with several returns, each return records its value's type and
+    // waits while the return type is open. Once every return has a type: types that fit each other (equal, one class,
+    // int and float, Optional or None) go on as before; other types make the return type Union[...] of them, and each
+    // return wraps its value (wrapExpr). If the iterations stall first (e.g. a recursive call), everything goes on as
+    // before (bindIntReturns).
+    if (!isAsync && inPythonFile() && ctx->getBase()->returnType->getUnbound() &&
+        ctx->getBase()->nesReturnDecision == 0 && !ctx->getBase()->func->hasAttribute(Attr::IsGenerator)) {
+      auto &base = *ctx->getBase();
+      if (base.nesReturns < 0) {
+        NesReturnCounter counter;
+        if (auto fn = getFunction(base.name); fn && fn->origAst)
+          counter.transform(fn->origAst->getSuite());
+        base.nesReturns = counter.count;
+      }
+      if (base.nesReturns < 2 || base.bindIntReturns) {
+        base.nesReturnDecision = 1;
+      } else {
+        auto vt = stmt->getExpr()->getType();
+        if (auto st = vt->getStatic())
+          vt = st->getNonStaticType();
+        // A class with open generics (`Tuple[str, Optional[T]]` of `return x, None`) counts as known.
+        if (vt->getClass())
+          base.nesReturnTypes[stmt] = vt->shared_from_this();
+        if (base.nesReturnTypes.size() < static_cast<size_t>(base.nesReturns)) {
+          base.intReturnsDeferred = true;
+          if (!ctx->blockLevel)
+            ctx->returnEarly = true;
+          return;
+        }
+        std::vector<types::ClassType *> distinct;
+        bool simple = true;
+        for (auto &[s, t] : base.nesReturnTypes) {
+          auto c = t->getClass();
+          if (!c || !c->canRealize() || c->is(TYPE_OPTIONAL) || c->is("NoneType") || t->getFunc() ||
+              c->getUnion() || c->is("Generator") || c->is(TYPE_TYPE))
+            simple = false;
+          else if (std::ranges::none_of(distinct, [&](auto *d) { return d->name == c->name; }))
+            distinct.push_back(c);
+        }
+        bool numeric = distinct.size() == 2 && std::ranges::all_of(distinct, [](auto *d) {
+                         return d->is("int") || d->is("float");
+                       });
+        if (!simple || distinct.size() < 2 || numeric) {
+          base.nesReturnDecision = 1;
+        } else {
+          std::vector<Expr *> members;
+          for (auto *d : distinct)
+            members.push_back(N<IdExpr>(realize(d)->realizedName()));
+          auto u = transformType(
+              N<InstantiateExpr>(N<IdExpr>(getMangledClass("std.internal.core", "Union")), members));
+          unify(base.returnType.get(), extractType(u));
+          base.nesReturnDecision = 2;
+        }
+      }
+    }
 
     // NES: in user code, an int return waits while the return type is unbound, so that a float return elsewhere
     // (`return 1` and `return 1 - d / m`) makes the return type float and this value converts to it; inferTypes binds
