@@ -386,6 +386,8 @@ public:
   Expr *transformIsInstance(CallExpr *);
   /// Whether the code being type checked is user code, not the standard library or a plugin (IFilesystem::is_library).
   bool inUserCode() const;
+  /// NES: user code or a Python module (.py), e.g. a pure-Python library on NES_CODON_PYTHON_PATH.
+  bool inPythonFile() const;
   /// Whether a function body (without nested functions and classes) returns None, and whether it returns another value.
   static std::pair<bool, bool> returnKinds(Stmt *suite);
   Expr *transformStaticLen(CallExpr *);

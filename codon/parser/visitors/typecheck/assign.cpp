@@ -70,6 +70,12 @@ void TypecheckVisitor::visit(DelStmt *stmt) {
     resultStmt = N<ExprStmt>(transform(
         N<CallExpr>(N<DotExpr>(idx->getExpr(), "__delitem__"), idx->getIndex())));
   } else if (auto ei = cast<IdExpr>(stmt->getExpr())) {
+    // NES: `del f` of a function or class (CPython's urllib.parse: `del _fix_result_transcoding` after the call) only
+    // unbinds the name: compiled code keeps no binding to remove, so the statement is a no-op.
+    if (auto val = ctx->find(ei->getValue()); val && (val->isFunc() || val->isType())) {
+      resultStmt = transform(N<SuiteStmt>());
+      return;
+    }
     // Assign `a` to `type(a)()` to mark it for deletion
     resultStmt = transform(N<AssignStmt>(
         stmt->getExpr(),

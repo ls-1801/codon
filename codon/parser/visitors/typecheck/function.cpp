@@ -133,7 +133,27 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
         !ctx->getBase()->bindIntReturns && stmt->getExpr()->getClassType() &&
         stmt->getExpr()->getClassType()->is("int")) {
       ctx->getBase()->intReturnsDeferred = true;
+      // A waiting return still ends the code after it (a static `if` with a return).
+      if (!ctx->blockLevel)
+        ctx->returnEarly = true;
       return;
+    }
+    // NES: a tuple return without Optional elements waits in the same way, so that a return with an Optional element
+    // (`return url, None` after `return url[:i], url[i+1:]`) sets the return type, and this tuple's elements are wrapped.
+    if (!isAsync && ctx->getBase()->returnType->getUnbound() && inPythonFile() &&
+        !ctx->getBase()->bindIntReturns && stmt->getExpr()->getClassType() &&
+        stmt->getExpr()->getClassType()->is(TYPE_TUPLE) && stmt->getExpr()->getClassType()->canRealize()) {
+      auto vt = stmt->getExpr()->getClassType();
+      bool optional = false;
+      for (size_t i = 0; i < vt->size(); i++)
+        if (auto e = (*vt)[i]->getClass(); e && (e->is(TYPE_OPTIONAL) || e->is("NoneType")))
+          optional = true;
+      if (!optional && vt->size() > 0) {
+        ctx->getBase()->intReturnsDeferred = true;
+        if (!ctx->blockLevel)
+          ctx->returnEarly = true;
+        return;
+      }
     }
 
     // A returned value whose type does not match the annotated return type T converts through `value.__as__(T)` if its
@@ -171,6 +191,34 @@ void TypecheckVisitor::visit(ReturnStmt *stmt) {
             stmt->expr = transform(N<CallExpr>(N<DotExpr>(value, "__as__"),
                                                N<IdExpr>(targetType->realizedName())));
           }
+        }
+      }
+    }
+
+    // NES: a returned tuple whose element is a T where the return type has an Optional[T] (`return url, None` and later
+    // `return url, rest`, CPython's urllib.parse._splitparams) wraps that element, as wrapExpr does for a single value:
+    // `(t := value; (t[0], Optional(t[1])))`.
+    if (!isAsync && !ctx->getBase()->returnType->getUnbound() && inPythonFile()) {
+      auto rt = ctx->getBase()->returnType->getClass();
+      auto vt = stmt->getExpr()->getClassType();
+      if (rt && vt && rt->is(TYPE_TUPLE) && vt->is(TYPE_TUPLE) && rt->size() == vt->size() && vt->canRealize()) {
+        std::vector<bool> wrap(vt->size(), false);
+        bool any = false;
+        for (size_t i = 0; i < vt->size(); i++) {
+          auto r = (*rt)[i]->getClass();
+          auto v = (*vt)[i]->getClass();
+          if (r && v && r->is(TYPE_OPTIONAL) && !v->is(TYPE_OPTIONAL) && !v->is("NoneType"))
+            wrap[i] = any = true;
+        }
+        if (any) {
+          auto var = getTemporaryVar("ret");
+          std::vector<Expr *> items;
+          for (size_t i = 0; i < vt->size(); i++) {
+            Expr *item = N<IndexExpr>(N<IdExpr>(var), N<IntExpr>(i));
+            items.push_back(wrap[i] ? N<CallExpr>(N<IdExpr>(TYPE_OPTIONAL), item) : item);
+          }
+          stmt->expr = transform(
+              N<StmtExpr>(N<AssignStmt>(N<IdExpr>(var), stmt->getExpr()), N<TupleExpr>(items)));
         }
       }
     }

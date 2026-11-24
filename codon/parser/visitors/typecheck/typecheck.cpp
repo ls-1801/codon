@@ -241,11 +241,24 @@ Expr *TypecheckVisitor::transform(Expr *expr, bool allowTypes) {
     expr->setType(instantiateUnbound());
 
   if (!expr->isDone()) {
+    // NES: a condition expects a bool only of the expressions that pass its truth value on (`and`, `or`, `not`, and the
+    // StmtExpr of a short-circuit). The operands of other expressions keep their values: in `if (s or '') == 'x':`,
+    // `s or ''` is a str, as in Python, not a bool.
+    types::TypePtr hiddenExpectedType = nullptr;
+    if (ctx->expectedType) {
+      auto b = cast<BinaryExpr>(expr);
+      auto u = cast<UnaryExpr>(expr);
+      if (!(b && (b->getOp() == "&&" || b->getOp() == "||")) && !(u && u->getOp() == "!") &&
+          !cast<StmtExpr>(expr))
+        std::swap(ctx->expectedType, hiddenExpectedType);
+    }
     TypecheckVisitor v(ctx, preamble, prependStmts);
     v.setSrcInfo(expr->getSrcInfo());
     ctx->pushNode(expr);
     expr->accept(v);
     ctx->popNode();
+    if (hiddenExpectedType)
+      std::swap(ctx->expectedType, hiddenExpectedType);
     if (v.resultExpr) {
       for (auto it = expr->attributes_begin(); it != expr->attributes_end(); ++it) {
         const auto *attr = expr->getAttribute(*it);

@@ -616,6 +616,10 @@ bool TypecheckVisitor::inUserCode() const {
          !ctx->cache->fs->is_library(ctx->moduleName.path);
 }
 
+bool TypecheckVisitor::inPythonFile() const {
+  return inUserCode() || endswith(ctx->moduleName.path, ".py");
+}
+
 /// Transform isinstance method to a static boolean expression.
 /// Special cases:
 ///   `isinstance(obj, ByVal)` is True if `type(obj)` is a tuple type
