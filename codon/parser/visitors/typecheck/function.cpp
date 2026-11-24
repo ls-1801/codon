@@ -696,6 +696,13 @@ void TypecheckVisitor::visit(FunctionStmt *stmt) {
       aj++;
     }
 
+    // NES: in a Python file, a function annotated `-> int` can return a float (`return total / count`): CPython does not
+    // enforce the annotation. The annotation is ignored and the return type is inferred from the returns (int and float
+    // returns give float).
+    if (stmt->getReturn() && stmt->getSuite() && endswith(ctx->moduleName.path, ".py") &&
+        isId(stmt->getReturn(), "int"))
+      stmt->ret = nullptr;
+
     // In user code, a function annotated -> T whose body returns None returns Optional[T]: CPython does not enforce the
     // annotation, so such a function returns None as well.
     if (stmt->getReturn() && stmt->getSuite() && inUserCode() &&
