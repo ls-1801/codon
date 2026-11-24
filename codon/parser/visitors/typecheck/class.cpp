@@ -18,18 +18,65 @@ namespace codon::ast {
 using namespace types;
 using namespace matcher;
 
+namespace {
+/// NES: whether a base class expression of the class uses one of the class's own type parameters (`A[U]` in
+/// `class B[U](A[U])`). Such a base cannot be typed before the class's generics are in scope, nor typed a second time.
+bool nesBasesUseOwnGenerics(ClassStmt *stmt,
+                            const std::function<std::string(const std::string &)> &unmangle) {
+  std::unordered_set<std::string> generics;
+  // Compared by unmangled names: the parameters and the identifiers in the bases may be canonical or not here.
+  for (auto &p : *stmt)
+    if (p.isGeneric())
+      generics.insert(unmangle(p.getName()));
+  if (generics.empty())
+    return false;
+  std::function<bool(Expr *)> uses = [&](Expr *e) -> bool {
+    if (!e)
+      return false;
+    if (auto id = cast<IdExpr>(e))
+      return generics.contains(unmangle(id->getValue()));
+    if (auto ix = cast<IndexExpr>(e))
+      return uses(ix->getExpr()) || uses(ix->getIndex());
+    if (auto t = cast<TupleExpr>(e)) {
+      for (auto *i : *t)
+        if (uses(i))
+          return true;
+      return false;
+    }
+    if (auto in = cast<InstantiateExpr>(e)) {
+      if (uses(in->getExpr()))
+        return true;
+      for (auto *i : *in)
+        if (uses(i))
+          return true;
+    }
+    return false;
+  };
+  return std::ranges::any_of(stmt->getBaseClasses(), uses);
+}
+} // namespace
+
 /// Parse a class (type) declaration and add a (generic) type to the context.
 void TypecheckVisitor::visit(ClassStmt *stmt) {
   // NES: a class with a tuple class among its bases (e.g. a namedtuple) and only field-less classes otherwise (mixins
   // with methods and properties, `object`) becomes a tuple class itself, inheriting statically: Python code such as
   // `class SplitResult(_SplitResultBase, _NetlocResultMixinStr)` in urllib.parse. A reference class cannot inherit a
   // tuple class, and scoping decides tuple-ness from decorators only, before the bases are known.
+  // A class whose bases use its own type parameters (`class B[U](A[U])`) is skipped: they are not in scope yet; the
+  // namedtuple-with-mixins case never has them.
   if (!stmt->hasAttribute(Attr::Tuple) && !stmt->hasAttribute(Attr::Extend) &&
-      !stmt->getBaseClasses().empty()) {
+      !stmt->getBaseClasses().empty() && !nesBasesUseOwnGenerics(stmt, [this](const std::string &n) { return getUnmangledName(n); })) {
     bool tupleBase = false, fieldless = true;
     std::vector<size_t> baseGenerics; // the number of unbound generics of each base
     for (auto *base : stmt->getBaseClasses()) {
-      auto t = transformType(clone(base), true);
+      // A base that cannot be typed here (yet) makes this no tuple class; the class itself reports real errors later.
+      Expr *t = nullptr;
+      try {
+        t = transformType(clone(base), true);
+      } catch (const exc::ParserException &) {
+        fieldless = false;
+        break;
+      }
       auto ct = t ? extractClassType(t) : nullptr;
       auto c = ct ? getClass(ct) : nullptr;
       if (!c || !c->ast) {
@@ -330,7 +377,9 @@ void TypecheckVisitor::visit(ClassStmt *stmt) {
 
       // NES: a subclass without fields and without __init__ of its own (`class MyError(ValueError): pass`) uses the
       // __init__ of its base class, as in Python, not a generated __init__ that takes every inherited field.
-      if (!stmt->hasAttribute(Attr::Tuple) && !stmt->getBaseClasses().empty()) {
+      // Not for a class whose bases use its own type parameters: typing such a base again here (`A[U]` in
+      // `class B[U](A[U])`) does not unify with the generalized U.
+      if (!stmt->hasAttribute(Attr::Tuple) && !stmt->getBaseClasses().empty() && !nesBasesUseOwnGenerics(stmt, [this](const std::string &n) { return getUnmangledName(n); })) {
         bool ownFields = false;
         for (auto &a : *stmt)
           if (a.isValue() && !ClassStmt::isClassVar(a))
@@ -488,7 +537,9 @@ void TypecheckVisitor::visit(ClassStmt *stmt) {
   }
   // NES: a class variable that overrides one of a base class (`class Sub(Base): prefix = "s:"`): the inherited methods
   // that read it are copied into this class (see nesCopyInheritedReaders).
-  if (!stmt->hasAttribute(Attr::Extend) && !stmt->hasAttribute(Attr::Tuple)) {
+  // Not for a class whose bases use its own type parameters (`class B[U](A[U])`): the copies are typed by the base's
+  // generics, which do not unify with this class's ('type[A[U]]' does not match 'type[A[U]]').
+  if (!stmt->hasAttribute(Attr::Extend) && !stmt->hasAttribute(Attr::Tuple) && !nesBasesUseOwnGenerics(stmt, [this](const std::string &n) { return getUnmangledName(n); })) {
     std::vector<std::string> overridden;
     auto &own = getClass(canonicalName)->classVars;
     for (auto &[varName, var] : own) {

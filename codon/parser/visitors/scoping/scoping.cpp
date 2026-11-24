@@ -579,7 +579,10 @@ void ScopingVisitor::nesConditionalDefs(Stmt *body) {
 }
 
 void ScopingVisitor::visit(FunctionStmt *stmt) {
-  TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
+  // NES: forward references (string annotations) only in Python files. Codon's own files use strings as static
+  // arguments in annotations (numpy: `datetime64['D', 1]`), which must stay strings.
+  if (endswith(stmt->getSrcInfo().file, ".py"))
+    TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
   nesConditionalDefs(stmt->getSuite());
   // Validate
   std::vector<Expr *> newDecorators;
@@ -787,7 +790,8 @@ void ScopingVisitor::visit(ClassStmt *stmt) {
   // NES: `__class_getitem__ = classmethod(types.GenericAlias)` in a class body makes `C[int]` valid in type hints
   // (CPython's urllib.parse). Compiled code does not need it at run time, so the class variable is removed.
   TypecheckVisitor::nesDropClassGetItem(stmt);
-  TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
+  if (endswith(stmt->getSrcInfo().file, ".py")) // NES: only in Python files, see visit(FunctionStmt)
+    TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
   // @tuple(init=, repr=, eq=, order=, hash=, pickle=, container=, python=, add=,
   // internal=...)
   // @dataclass(...)
