@@ -882,6 +882,15 @@ Expr *TypecheckVisitor::transformTupleFn(CallExpr *expr) {
   if (inUserCode() && !findMethod(cls, "__tuple__").empty())
     return transform(N<CallExpr>(N<DotExpr>(expr->begin()->getExpr(), "__tuple__")));
 
+  // NES: in Python files, tuple(x) of an iterable that is not a tuple (a list, a str, a generator, a set) is a tuple of
+  // its items with a length known at run time, as in Python (`tuple(s.split())`, `tuple("abc")`). Codon's own rule
+  // below gives the fields of the class instead (a list's array and length).
+  if (inPythonFile() && !cls->is(TYPE_TUPLE) && !findMethod(cls, "__iter__").empty()) {
+    if (cls->is(getMangledClass("std.internal.types.collections.tuple", "DynamicTuple")))
+      return expr->begin()->getExpr();
+    return transform(N<CallExpr>(N<IdExpr>("DynamicTuple"), expr->begin()->getExpr()));
+  }
+
   std::vector<Expr *> args;
   std::string var = getTemporaryVar("tup");
   for (auto &field : getClassFields(cls))

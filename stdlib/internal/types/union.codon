@@ -91,3 +91,52 @@ class Union:
                 if Union._get_tag(union) == tag:
                     return Union._get_data(union, T).__repr__()
         return ''
+
+    # NES: comparisons dispatch on the active types of both sides, as in Python. The default `union op x` calls the
+    # method of the active type of `union` and converts x to that same type, which raised for a Union[int, float]
+    # holding an int compared with one holding a float (`min(pairs, key=lambda p: ranks.get(p, float('inf')))`).
+    # A side without the method tries the reflected method of the other side; == and != fall back to identity.
+    def _cmp_values(x, y, op: Literal[str], rop: Literal[str]) -> bool:
+        if hasattr(type(x), op, type(y)):
+            return getattr(x, op)(y)
+        elif hasattr(type(y), rop, type(x)):
+            return getattr(y, rop)(x)
+        elif op == "__eq__":
+            return False
+        elif op == "__ne__":
+            return True
+        else:
+            raise TypeError(f"'{op}' not supported between instances of '{type(x).__name__}' and '{type(y).__name__}'")
+
+    def _cmp_right(x, b, op: Literal[str], rop: Literal[str]) -> bool:
+        if isinstance(b, Union):
+            for tb, TB in static.vars_types(b, with_index=True):
+                if Union._get_tag(b) == tb:
+                    return Union._cmp_values(x, Union._get_data(b, TB), op, rop)
+            raise TypeError("invalid union comparison")
+        else:
+            return Union._cmp_values(x, b, op, rop)
+
+    def _cmp(a, b, op: Literal[str], rop: Literal[str]) -> bool:
+        for ta, TA in static.vars_types(a, with_index=True):
+            if Union._get_tag(a) == ta:
+                return Union._cmp_right(Union._get_data(a, TA), b, op, rop)
+        raise TypeError("invalid union comparison")
+
+    def __lt__(self, other) -> bool:
+        return Union._cmp(self, other, "__lt__", "__gt__")
+
+    def __le__(self, other) -> bool:
+        return Union._cmp(self, other, "__le__", "__ge__")
+
+    def __gt__(self, other) -> bool:
+        return Union._cmp(self, other, "__gt__", "__lt__")
+
+    def __ge__(self, other) -> bool:
+        return Union._cmp(self, other, "__ge__", "__le__")
+
+    def __eq__(self, other) -> bool:
+        return Union._cmp(self, other, "__eq__", "__eq__")
+
+    def __ne__(self, other) -> bool:
+        return Union._cmp(self, other, "__ne__", "__ne__")

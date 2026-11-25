@@ -214,5 +214,32 @@ class DynamicTuple:
                 n += 1
             return DynamicTuple(q, length)
 
+    # NES: Python's tuple methods index and count, and the trailing comma of a 1-tuple in repr.
+    def index(self, x: T, start: int = 0, stop: int = 0x7FFFFFFFFFFFFFFF):
+        n = self._len
+        if start < 0:
+            start += n
+            if start < 0:
+                start = 0
+        if stop < 0:
+            stop += n
+            if stop < 0:
+                stop = 0
+        if stop > n:
+            stop = n
+        for i in range(start, stop):
+            if self._ptr[i] == x:
+                return i
+        raise ValueError("tuple.index(x): x not in tuple")
+
+    def count(self, x: T):
+        c = 0
+        for i in range(self._len):
+            if self._ptr[i] == x:
+                c += 1
+        return c
+
     def __repr__(self):
+        if self._len == 1:
+            return f"({self._ptr[0].__repr__()},)"
         return f"({', '.join(a.__repr__() for a in self)})"

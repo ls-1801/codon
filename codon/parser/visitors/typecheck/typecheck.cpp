@@ -777,6 +777,34 @@ TypecheckVisitor::canWrapExpr(Type *exprType, Type *expectedType, FuncType *call
     };
   }
 
+  // NES: a tuple whose items all have the type T where a DynamicTuple[T] is expected (a pair as the key of a dict whose
+  // keys come from `tuple(list)`): `(t := value; DynamicTuple[T]([t[0], t[1], ...]))`. Python does not distinguish
+  // the two, and both hash the same way.
+  else if (expectedClass && exprClass && expectedClass->is(getMangledClass("std.internal.types.collections.tuple", "DynamicTuple")) && exprClass->is(TYPE_TUPLE) &&
+           inPythonFile() && extractClassGeneric(expectedClass)->getClass() &&
+           realize(extractClassGeneric(expectedClass)) && [&]() {
+             auto item = extractClassGeneric(expectedClass)->realizedName();
+             for (size_t i = 0; i < exprClass->size(); i++)
+               if (!(*exprClass)[i]->getClass() || !(*exprClass)[i]->canRealize() ||
+                   (*exprClass)[i]->realizedName() != item)
+                 return false;
+             return true;
+           }()) {
+    type = expectedClass->shared_from_this();
+    auto size = exprClass->size();
+    auto item = extractClassGeneric(expectedClass)->realizedName();
+    fn = [this, size, item](Expr *expr) -> Expr * {
+      auto var = getTemporaryVar("tuple");
+      std::vector<Expr *> items;
+      for (size_t i = 0; i < size; i++)
+        items.push_back(N<IndexExpr>(N<IdExpr>(var), N<IntExpr>(i)));
+      Expr *list = size ? static_cast<Expr *>(N<ListExpr>(items))
+                        : N<CallExpr>(N<InstantiateExpr>(N<IdExpr>("List"), N<IdExpr>(item)));
+      return N<StmtExpr>(N<AssignStmt>(N<IdExpr>(var), expr),
+                         N<CallExpr>(N<InstantiateExpr>(N<IdExpr>("DynamicTuple"), N<IdExpr>(item)), list));
+    };
+  }
+
   else if (expectedClass && expectedClass->is(TYPE_OPTIONAL) && exprClass &&
            !exprClass->is(expectedClass->name)) {
     type =
