@@ -20,7 +20,13 @@ def default_rng(seed = None):
 
     return Generator(PCG64(seed))
 
-_global_rng: Generator[MT19937] = Generator(MT19937(None))
+# NebulaStream: the state of the global generator is memory of the runtime, as random's (see random.codon).
+@C
+def nes_udf_random_state(size: int) -> Ptr[byte]:
+    pass
+
+_global_rng: Generator[MT19937] = Generator(
+    MT19937._seeded(Ptr[u32](nes_udf_random_state((624 + 1) * 4)), None))
 
 def beta(a, b, size = None):
     return _global_rng.beta(a, b, size)

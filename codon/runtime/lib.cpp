@@ -143,6 +143,10 @@ SEQ_FUNC char **seq_env() { return environ; }
  * GC
  */
 
+// NebulaStream: the state of the generators of random and numpy.random. NES provides its own (memory that it does not
+// restore before a UDF call).
+SEQ_FUNC void *nes_udf_random_state(size_t n) { return seq_alloc_atomic(n); }
+
 SEQ_FUNC void *seq_alloc(size_t n) {
 #if USE_STANDARD_MALLOC
   return malloc(n);

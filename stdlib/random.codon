@@ -145,6 +145,10 @@ class Random:
         self.gen = RandomGenerator()
         self.seed(seed)
 
+    def __init__(self, gen: RandomGenerator):
+        self.gen = gen
+        self.seed(None)
+
     def seed(self, a: Optional[int]):
         if a is not None:
             self.gen.seed(abs(a))
@@ -488,7 +492,14 @@ class Random:
             for i in range(k)
         ]
 
-_rnd = Random()
+# NebulaStream: the state of the module's generator is memory of the runtime (nes_udf_random_state), not of the module.
+# NES restores a UDF module's memory before each call; the generator's state is not part of it, so each call gets new
+# numbers. The default runtime allocates it on the heap.
+@C
+def nes_udf_random_state(size: int) -> Ptr[byte]:
+    pass
+
+_rnd = Random(RandomGenerator(Ptr[u32](nes_udf_random_state((N + 1) * 4))))
 
 def seed(a: int):
     _rnd.seed(a)

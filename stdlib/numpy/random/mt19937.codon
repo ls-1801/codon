@@ -29,7 +29,15 @@ class MT19937:
         if not isinstance(seed, SeedSequence):
             return MT19937(SeedSequence(seed))
         else:
-            g = MT19937(Ptr[u32](N + 1), seed)
+            return MT19937._seeded(Ptr[u32](N + 1), seed, legacy)
+
+    # NebulaStream: a generator whose state is memory that the caller provides (numpy.random's global generator).
+    @staticmethod
+    def _seeded(data: Ptr[u32], seed, legacy: Literal[bool] = False):
+        if not isinstance(seed, SeedSequence):
+            return MT19937._seeded(data, SeedSequence(seed), legacy)
+        else:
+            g = MT19937(data, seed)
 
             if legacy:
                 if not isinstance(seed, int):
