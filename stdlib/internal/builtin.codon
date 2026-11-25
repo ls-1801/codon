@@ -245,9 +245,64 @@ def reversed(x):
 
     return _rev(x)
 
-def round(x, n=0):
-    nx = float.__pow__(10.0, n)
-    return float.__round__(x * nx) / nx
+# NebulaStream: Python's round. round(x) of a float is an int, and ties go to the even value. round(x, n) of a float is
+# a float, correctly rounded from the exact value of x (2.675 is below 2.675 in binary, so round(2.675, 2) is 2.67).
+# round of an int is an int. Codon's int has 64 bits: a result outside of it raises OverflowError, where Python gives a
+# larger int.
+def _round_float_to_int(x: float) -> int:
+    if x != x:
+        raise ValueError("cannot convert float NaN to integer")
+    r = x.rint()
+    if r - r != 0.0 or r >= 9223372036854775808.0 or r < -9223372036854775808.0:
+        raise OverflowError("cannot convert float infinity to integer" if r - r != 0.0 else
+                            "rounded value too large for a 64-bit int")
+    return r.__int__()
+
+def _round_float(x: float, n: int) -> float:
+    r = _C.nes_float_round(x, n)
+    if r - r != 0.0 and x - x == 0.0:
+        raise OverflowError("rounded value too large to represent")
+    return r
+
+def _round_int(x: int, n: int) -> int:
+    if n >= 0:
+        return x
+    if n < -19:
+        return 0
+    if n == -19:
+        # |x| < 9.3e18: the result is 0, or 10**19, which does not fit (5e18 is a tie and goes to 0).
+        if x > 5000000000000000000 or x < -5000000000000000000:
+            raise OverflowError("rounded value too large for a 64-bit int")
+        return 0
+    p = 1
+    for _ in range(-n):
+        p *= 10
+    q = x // p
+    r = x - q * p
+    if 2 * r > p or (2 * r == p and q % 2 != 0):
+        q += 1
+    if q > 9223372036854775807 // p or q < -9223372036854775808 // p:
+        raise OverflowError("rounded value too large for a 64-bit int")
+    return q * p
+
+def round(x, n=None):
+    if isinstance(x, float):
+        if isinstance(n, NoneType) or isinstance(n, Optional[NoneType]):
+            return _round_float_to_int(x)
+        else:
+            return _round_float(x, n.__index__())
+    elif isinstance(x, int) or isinstance(x, bool):
+        if isinstance(n, NoneType) or isinstance(n, Optional[NoneType]):
+            return int(x)
+        else:
+            return _round_int(int(x), n.__index__())
+    elif hasattr(x, "__round__"):
+        if isinstance(n, NoneType) or isinstance(n, Optional[NoneType]):
+            return x.__round__()
+        else:
+            return x.__round__(n)
+    else:
+        compile_error("round() of an unsupported type")
 
 def sum(x, start=0):
     if ((isinstance(x, List[int]) and isinstance(start, int)) or

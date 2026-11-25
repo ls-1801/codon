@@ -39,6 +39,12 @@ def seq_int_from_str(a: str, b: Ptr[cobj], c: i32) -> int:
 def seq_float_from_str(a: str, b: Ptr[cobj]) -> float:
     pass
 
+# NebulaStream: round(x, n) for a float x, correctly rounded as in CPython (runtime/lib.cpp; NES provides its own).
+@pure
+@C
+def nes_float_round(a: float, n: int) -> float:
+    pass
+
 @pure
 @C
 def seq_strdup(a: cobj) -> str:

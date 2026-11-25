@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -146,6 +147,61 @@ SEQ_FUNC char **seq_env() { return environ; }
 // NebulaStream: the state of the generators of random and numpy.random. NES provides its own (memory that it does not
 // restore before a UDF call).
 SEQ_FUNC void *nes_udf_random_state(size_t n) { return seq_alloc_atomic(n); }
+
+// NebulaStream: round(x, n) for a float, as CPython's float.__round__: correctly rounded from the exact binary value of
+// x, ties to even. NES has the same function (PythonUdfRuntime.cpp, nesFloatRound).
+SEQ_FUNC double nes_float_round(double x, int64_t n) {
+  if (!std::isfinite(x) || x == 0.0)
+    return x;
+  if (n > 323) // more digits than any double has after the point
+    return x;
+  if (n < -308) // 10**-n is larger than any double
+    return 0.0 * x;
+  if (n >= 0) {
+    // printf gives the exact decimal value, rounded with ties to even; strtod gives the nearest double.
+    char buf[700];
+    snprintf(buf, sizeof(buf), "%.*f", static_cast<int>(n), x);
+    return strtod(buf, nullptr);
+  }
+  // n < 0: round the exact integer digits of |x| at position -n; the fraction of x breaks a tie upward.
+  const double whole = std::trunc(std::fabs(x));
+  const bool hasFraction = whole != std::fabs(x);
+  char digits[400];
+  const int len = snprintf(digits, sizeof(digits), "%.0f", whole);
+  const int drop = static_cast<int>(-n);
+  if (len < drop)
+    return std::copysign(0.0, x);
+  const int keep = len - drop;
+  bool up = false;
+  if (digits[keep] > '5') {
+    up = true;
+  } else if (digits[keep] == '5') {
+    bool rest = hasFraction;
+    for (int i = keep + 1; i < len && !rest; ++i)
+      rest = digits[i] != '0';
+    const int last = keep > 0 ? digits[keep - 1] - '0' : 0;
+    up = rest || (last % 2 == 1);
+  }
+  char out[420];
+  int o = 0;
+  if (x < 0)
+    out[o++] = '-';
+  out[o++] = '0'; // room for a carry
+  memcpy(out + o, digits, keep);
+  int end = o + keep;
+  if (up) {
+    int i = end - 1;
+    while (out[i] == '9') {
+      out[i] = '0';
+      --i;
+    }
+    out[i] += 1;
+  }
+  for (int i = 0; i < drop; ++i)
+    out[end++] = '0';
+  out[end] = '\0';
+  return strtod(out, nullptr);
+}
 
 SEQ_FUNC void *seq_alloc(size_t n) {
 #if USE_STANDARD_MALLOC

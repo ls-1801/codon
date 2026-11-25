@@ -382,6 +382,11 @@ class UnaryUFunc:
     def _f(self, x, dtype: type = NoneType, dtype_out: type = NoneType):
         if dtype is NoneType:
             x1 = x
+        elif (__name__ == 'absolute' and (isinstance(x, complex) or isinstance(x, complex64)) and
+              (dtype is float or dtype is float32)):
+            # NebulaStream: as in NumPy, dtype selects the loop by its output type: absolute of a complex value with
+            # dtype float64 is the loop complex128 -> float64, not abs of the real part.
+            x1 = util.cast(x, complex if dtype is float else complex64)
         else:
             x1 = util.cast(x, dtype)
 
