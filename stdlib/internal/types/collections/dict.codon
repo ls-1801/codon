@@ -111,6 +111,15 @@ class Dict:
         else:
             raise KeyError(str(key))
 
+    # NES: an empty dict or set whose element type no use fixed (`set([])` after `p = []` for a parameter whose default
+    # is None) has the element type NoneType. Only None can be an element, so a value of another type is never one. The
+    # typed method below wins whenever it applies (Codon resolves overloads bottom-up).
+    def __contains__(self, key) -> bool:
+        if K is NoneType:
+            return False
+        else:
+            compile_error("dict.__contains__: the key has another type than the keys")
+
     def __contains__(self, key: K) -> bool:
         return self._kh_get(key) != self._kh_end()
 

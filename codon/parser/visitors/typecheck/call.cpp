@@ -65,6 +65,67 @@ void TypecheckVisitor::visit(CallExpr *expr) {
 
   validateCall(expr);
 
+  // NES: `dict(record, k=v, ...)` for a record (a dict literal with values of different types, see transformNesRecord):
+  // the dict literal `{"a": record["a"], ..., "k": v}` with the record's keys in order, a keyword's value in place of
+  // the record's value of that key, and the other keywords at the end, as Python's dict() orders them. The literal is a
+  // record again, or a Dict when its values unify.
+  if (endswith(expr->getSrcInfo().file, ".py") && match(expr->getExpr(), M<IdExpr>("dict")) && !expr->empty() &&
+      (*expr)[0].getName().empty()) {
+    bool keywordsOnly = true;
+    for (size_t i = 1; i < expr->size(); i++)
+      keywordsOnly &= !(*expr)[i].getName().empty() && !startswith((*expr)[i].getName(), "*");
+    auto first = (*expr)[0].getExpr();
+    if (keywordsOnly && !cast<StarExpr>(first) && !cast<KeywordStarExpr>(first)) {
+      (*expr)[0].value = first = transform(first);
+      // The type of the first argument decides: wait for it.
+      if (expr->size() > 1 && !first->getClassType())
+        return;
+      const std::vector<std::string> *recordKeys = nullptr;
+      std::vector<std::string> keys;
+      if (auto c = first->getClassType()) {
+        for (auto &[signature, canonical] : ctx->cache->nesRecordClasses)
+          if (c->name == canonical) {
+            keys = split(signature, '\x1f');
+            recordKeys = &keys;
+          }
+      }
+      if (recordKeys) {
+        auto var = getTemporaryVar("record");
+        std::vector<Expr *> items;
+        std::vector<bool> used(expr->size(), false);
+        for (auto &key : keys) {
+          Expr *value = N<IndexExpr>(N<IdExpr>(var), N<StringExpr>(key));
+          for (size_t i = 1; i < expr->size(); i++)
+            if ((*expr)[i].getName() == key) {
+              value = (*expr)[i].getExpr();
+              used[i] = true;
+            }
+          items.push_back(N<TupleExpr>(std::vector<Expr *>{N<StringExpr>(key), value}));
+        }
+        for (size_t i = 1; i < expr->size(); i++)
+          if (!used[i])
+            items.push_back(
+                N<TupleExpr>(std::vector<Expr *>{N<StringExpr>((*expr)[i].getName()), (*expr)[i].getExpr()}));
+        auto dictExpr = N<DictExpr>(items);
+        dictExpr->setSrcInfo(expr->getSrcInfo());
+        resultExpr = transform(N<StmtExpr>(N<AssignStmt>(N<IdExpr>(var), first), dictExpr));
+        return;
+      }
+      // A Dict with keywords: a copy, then each keyword as an item (`d2 = dict(d); d2["k"] = v; d2`).
+      if (auto c = first->getClassType();
+          c && c->name == getStdLibType("Dict")->getClass()->name && expr->size() > 1) {
+        auto var = getTemporaryVar("dict");
+        std::vector<Stmt *> stmts;
+        stmts.push_back(N<AssignStmt>(N<IdExpr>(var), N<CallExpr>(N<IdExpr>("dict"), first)));
+        for (size_t i = 1; i < expr->size(); i++)
+          stmts.push_back(N<AssignStmt>(N<IndexExpr>(N<IdExpr>(var), N<StringExpr>((*expr)[i].getName())),
+                                        (*expr)[i].getExpr()));
+        resultExpr = transform(N<StmtExpr>(stmts, N<IdExpr>(var)));
+        return;
+      }
+    }
+  }
+
   // Check if this call is partial call
   PartialCallData part;
   if (!expr->empty()) {

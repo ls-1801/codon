@@ -685,3 +685,12 @@ def __nes_or_default_optional__(arg: Optional[T], make, T: type):
             return make()
         value = arg.__val__()
         return value if value else make()
+
+
+# NES: a variable after a None test that rules None out (see the scoping visitor's NesNarrowing): the value of an
+# Optional, any other value as it is.
+def __nes_narrow__(x):
+    if isinstance(x, Optional):
+        return x.__val__()
+    else:
+        return x

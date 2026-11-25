@@ -187,6 +187,14 @@ class List:
                 self.len -= length
                 # self._resize(self.__len__())
 
+    # NES: an empty list whose element type no use fixed has the element type NoneType: a value of another type is never
+    # an element. The typed method below wins whenever it applies.
+    def __contains__(self, x) -> bool:
+        if T is NoneType:
+            return False
+        else:
+            compile_error("list.__contains__: the value has another type than the elements")
+
     def __contains__(self, x: T) -> bool:
         for a in self:
             if _list_same(a, x):

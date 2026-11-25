@@ -72,6 +72,15 @@ class Set:
         self.symmetric_difference_update(other)
         return self
 
+    # NES: an empty set or dict whose element type no use fixed (`set([])` after `p = []` for a parameter whose default
+    # is None) has the element type NoneType. Only None can be an element, so a value of another type is never one. The
+    # typed method below wins whenever it applies (Codon resolves overloads bottom-up).
+    def __contains__(self, key) -> bool:
+        if K is NoneType:
+            return False
+        else:
+            compile_error("set.__contains__: the key has another type than the elements")
+
     def __contains__(self, key: K) -> bool:
         return self._kh_get(key) != self._kh_end()
 
@@ -300,6 +309,20 @@ class Set:
         for a in other:
             s.add(a)
         return s
+
+    # NES: the union with an iterable of any element type. Codon resolves overloads bottom-up, so this one is tried first;
+    # for a set whose element type is NoneType (see __contains__) and another element type, the result is a set of the
+    # other's type, which cannot hold None. Otherwise it is the union above.
+    def union(self, other):
+        if K is NoneType:
+            if self.__len__() != 0:
+                raise TypeError("the union of a set that holds None with a set of another type is not supported")
+            return Set(other)
+        else:
+            s = self.copy()
+            for a in other:
+                s.add(a)
+            return s
 
     def isdisjoint(self, other: Generator[K]) -> bool:
         for a in other:

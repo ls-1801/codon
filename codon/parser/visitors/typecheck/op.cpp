@@ -941,6 +941,19 @@ Expr *TypecheckVisitor::transformBinaryIs(const BinaryExpr *expr) {
         N<BinaryExpr>(N<CallExpr>(N<DotExpr>(expr->getLhs(), "__raw__")),
                       "==", N<CallExpr>(N<DotExpr>(expr->getRhs(), "__raw__"))));
   }
+  // NES: a value whose type only holds None (NoneType, or Optional[...NoneType], e.g. a parameter whose default is None
+  // when the call omits it) is the other operand only if that one is None too: `strip_accents is not False` is True.
+  auto nesAlwaysNone = [](types::ClassType *c) {
+    while (c && c->is(TYPE_OPTIONAL) && !c->generics.empty())
+      c = c->generics[0].getType()->getClass();
+    return c && c->is("NoneType");
+  };
+  auto nesNeverNone = [](types::ClassType *c) {
+    return c && !c->is(TYPE_OPTIONAL) && !c->is("NoneType");
+  };
+  if ((nesAlwaysNone(lc->getClass()) && nesNeverNone(rc->getClass())) ||
+      (nesNeverNone(lc->getClass()) && nesAlwaysNone(rc->getClass())))
+    return transform(N<BoolExpr>(false));
   if (lc->is(TYPE_OPTIONAL)) {
     // lhs is optional: `return lhs.__is_optional__(rhs)`
     return transform(

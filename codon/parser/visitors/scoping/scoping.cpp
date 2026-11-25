@@ -756,6 +756,108 @@ void nesRebindNoneDefaults(Cache *cache, FunctionStmt *f) {
     }
   }
 }
+/// NES: whether a block always leaves (its last statement is break, continue, return or raise).
+bool nesAlwaysLeaves(SuiteStmt *suite) {
+  while (suite && !suite->empty() && cast<SuiteStmt>(suite->back()))
+    suite = cast<SuiteStmt>(suite->back());
+  if (!suite || suite->empty())
+    return false;
+  auto *last = suite->back();
+  return cast<BreakStmt>(last) || cast<ContinueStmt>(last) || cast<ReturnStmt>(last) || cast<ThrowStmt>(last);
+}
+
+/// NES: Python narrows a variable after a None test; Codon gives it one type, Optional[T], also where it cannot be None:
+/// `x = None` ... `if x is None: break` ... `items.append(x)` makes a List[Optional[T]]. In a Python file:
+///   `if x is None: <block that always leaves>` -> the statements after it use `x' = __nes_narrow__(x)`
+///   `if x is not None: <body>`                 -> the body uses `x' = __nes_narrow__(x)`
+/// __nes_narrow__ unwraps an Optional and returns any other value as it is. The renaming stops before the first statement
+/// that binds x again. Not when a nested function, lambda or class of the function mentions x.
+struct NesNarrowing {
+  Cache *cache = nullptr;
+  FunctionStmt *function = nullptr;
+  int counter = 0;
+
+  bool closureMentions(const std::string &name) {
+    NesClosureMentions closures;
+    closures.name = name;
+    closures.transform(function->getSuite());
+    return closures.found;
+  }
+
+  bool binds(Stmt *s, const std::string &name) {
+    NesBinds b;
+    b.name = name;
+    b.transform(s);
+    return b.found;
+  }
+
+  /// Renames x in the statements [from, end) of a suite until one binds x; returns whether any statement was renamed.
+  bool renameRest(SuiteStmt *suite, size_t from, const std::string &x, const std::string &to) {
+    NesRename rename;
+    rename.cache = cache;
+    rename.from = x;
+    rename.to = to;
+    bool any = false;
+    for (size_t j = from; j < suite->size(); j++) {
+      if (binds((*suite)[j], x))
+        break;
+      (*suite)[j] = rename.transform((*suite)[j]);
+      any = true;
+    }
+    return any;
+  }
+
+  Stmt *narrowed(const std::string &x, const std::string &to, const SrcInfo &info) {
+    auto assign = cache->N<AssignStmt>(
+        cache->N<IdExpr>(to), cache->N<CallExpr>(cache->N<IdExpr>("__nes_narrow__"), cache->N<IdExpr>(x)));
+    assign->setSrcInfo(info);
+    return assign;
+  }
+
+  void walk(SuiteStmt *suite) {
+    if (!suite)
+      return;
+    for (size_t i = 0; i < suite->size(); i++) {
+      auto *s = (*suite)[i];
+      if (auto ifs = cast<IfStmt>(s)) {
+        auto *b = cast<BinaryExpr>(ifs->getCond());
+        auto *id = b ? cast<IdExpr>(b->getLhs()) : nullptr;
+        if (id && cast<NoneExpr>(b->getRhs()) && !binds(ifs, id->getValue())) {
+          auto x = id->getValue();
+          if (b->getOp() == "is" && !ifs->getElse() && nesAlwaysLeaves(ifs->getIf()) && i + 1 < suite->size() &&
+              !closureMentions(x)) {
+            auto to = fmt::format("__nes_narrow_{}_{}", x, counter++);
+            if (renameRest(suite, i + 1, x, to))
+              (*suite)[i] = cache->N<SuiteStmt>(ifs, narrowed(x, to, ifs->getSrcInfo()));
+          } else if (b->getOp() == "is not" && ifs->getIf() && !ifs->getIf()->empty() && !closureMentions(x)) {
+            auto to = fmt::format("__nes_narrow_{}_{}", x, counter++);
+            auto body = ifs->getIf();
+            if (renameRest(body, 0, x, to))
+              (*body)[0] = cache->N<SuiteStmt>(narrowed(x, to, ifs->getSrcInfo()), (*body)[0]);
+          }
+        }
+        walk(ifs->getIf());
+        walk(ifs->getElse());
+      } else if (auto sub = cast<SuiteStmt>(s)) {
+        walk(sub);
+      } else if (auto w = cast<WhileStmt>(s)) {
+        walk(w->getSuite());
+        walk(w->getElse());
+      } else if (auto f = cast<ForStmt>(s)) {
+        walk(f->getSuite());
+        walk(f->getElse());
+      } else if (auto t = cast<TryStmt>(s)) {
+        walk(t->getSuite());
+        for (auto *e : *t)
+          walk(e->getSuite());
+        walk(t->getElse());
+        walk(t->getFinally());
+      } else if (auto wi = cast<WithStmt>(s)) {
+        walk(wi->getSuite());
+      }
+    }
+  }
+};
 } // namespace
 
 void ScopingVisitor::visit(FunctionStmt *stmt) {
@@ -764,6 +866,10 @@ void ScopingVisitor::visit(FunctionStmt *stmt) {
   if (endswith(stmt->getSrcInfo().file, ".py")) {
     TypecheckVisitor::nesForwardReferences(ctx->cache, stmt);
     nesRebindNoneDefaults(ctx->cache, stmt);
+    NesNarrowing narrowing;
+    narrowing.cache = ctx->cache;
+    narrowing.function = stmt;
+    narrowing.walk(cast<SuiteStmt>(stmt->getSuite()));
   }
   nesConditionalDefs(stmt->getSuite());
   // Validate
