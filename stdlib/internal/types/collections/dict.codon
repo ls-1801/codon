@@ -193,6 +193,17 @@ class Dict:
         if new_n_buckets > self._n_buckets:
             self._kh_rebuild(_dict_buckets_for(new_n_buckets))
 
+    def get(self, key: K, s: D, D: type):
+        # NES: a default of another type than the values (`ranks.get(pair, float('inf'))` on an int dict): the result
+        # is a value or the default, as in Python. Codon takes the last overload that fits: this one is first, so it
+        # applies only when the default is not a V and not None (the overloads below), and not while V is unknown.
+        O = Union[V, D]
+        x = self._kh_get(key)
+        if x != self._kh_end():
+            return O(self._vals[x])
+        return O(s)
+
+    @overload
     def get(self, key: K, s: V) -> V:
         return self._get_or(key, s)
 
@@ -202,16 +213,6 @@ class Dict:
         # default to V when the call was made, which raised even for a present key. The annotated result type lets
         # Codon type the variable that takes the result as Optional[V] before it realizes this function.
         return self.get(key)
-
-    @overload
-    def get(self, key: K, s: D, D: type):
-        # NES: a default of another type than the values (`ranks.get(pair, float('inf'))` on an int dict): the result
-        # is a value or the default, as in Python. Only when D is not V and not None (the overloads above).
-        O = Union[V, D]
-        x = self._kh_get(key)
-        if x != self._kh_end():
-            return O(self._vals[x])
-        return O(s)
 
     def _get_or(self, key: K, s: V) -> V:
         x = self._kh_get(key)
