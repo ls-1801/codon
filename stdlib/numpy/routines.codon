@@ -700,11 +700,18 @@ def fromiter(iterable, dtype: type, count: int = -1):
         return result
 
 def frombuffer(buffer: str, dtype: type = float, count: int = -1, offset: int = 0):
+    # the bytes of the str count, not its code points
     if count < 0:
-        count = (len(buffer) - offset) // util.sizeof(dtype)
+        count = (buffer.len - offset) // util.sizeof(dtype)
 
     p = Ptr[dtype](buffer.ptr + offset)
     return ndarray((count,), p)
+
+def frombuffer(buffer: bytes, dtype: type = float, count: int = -1, offset: int = 0):
+    return frombuffer(buffer._value, dtype, count, offset)
+
+def frombuffer(buffer: bytearray, dtype: type = float, count: int = -1, offset: int = 0):
+    return frombuffer(buffer._value, dtype, count, offset)
 
 ################
 # Broadcasting #

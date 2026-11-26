@@ -982,7 +982,7 @@ class ndarray[dtype, ndim: Literal[int]]:
                 p[i] = self._ptr(idx)[0]
                 i += 1
 
-        return str(p.as_byte(), n * self.itemsize)
+        return bytes(p.as_byte(), n * self.itemsize)
 
     def ravel(self, order: str = 'C'):
         ndarray._check_order(order)

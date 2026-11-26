@@ -1,0 +1,459 @@
+# Copyright (C) 2022-2026 Exaloop Inc. <https://exaloop.io>
+
+# bytes and bytearray, as in Python. bytes holds its bytes in a str and does no copying: the str methods of a plugin can
+# work on code points, so these methods use the fields .ptr and .len of the str. ndarray.tobytes() returns bytes, and
+# np.frombuffer reads bytes, bytearray or str.
+
+
+def _bytes_ascii_space(value: int) -> bool:
+    """The whitespace of bytes.strip(): space, \\t, \\n, \\r, \\v and \\f."""
+    return value == 32 or 9 <= value <= 13
+
+
+def _bytes_valid_utf8(data: Ptr[byte], size: int) -> bool:
+    """Strict UTF-8, as CPython decodes it: no overlong forms, no surrogates, at most U+10FFFF."""
+    position = 0
+    while position < size:
+        # 8 ASCII bytes at a time
+        while position + 8 <= size and Ptr[u64](data + position)[0] & u64(0x8080808080808080) == u64(0):
+            position += 8
+        if position >= size:
+            break
+        lead = int(data[position])
+        if lead < 0x80:
+            position += 1
+            continue
+        if 0xC2 <= lead <= 0xDF:
+            count, low, high = 1, 0x80, 0xBF
+        elif 0xE0 <= lead <= 0xEF:
+            count = 2
+            low = 0xA0 if lead == 0xE0 else 0x80
+            high = 0x9F if lead == 0xED else 0xBF
+        elif 0xF0 <= lead <= 0xF4:
+            count = 3
+            low = 0x90 if lead == 0xF0 else 0x80
+            high = 0x8F if lead == 0xF4 else 0xBF
+        else:
+            return False
+        if position + count >= size:
+            return False
+        second = int(data[position + 1])
+        if second < low or second > high:
+            return False
+        for k in range(2, count + 1):
+            if int(data[position + k]) & 0xC0 != 0x80:
+                return False
+        position += count + 1
+    return True
+
+
+class bytes:
+    """Holds its bytes in a str and works on the bytes: the str methods (unicode plugin) work on code points, so these
+    methods use the fields .ptr and .len of the str."""
+    _value: str
+
+    def __init__(self, value: str):
+        self._value = value
+
+    def __init__(self, data: Ptr[byte], size: int):
+        self._value = str(data, size)
+
+    def __init__(self, values: List[int]):
+        self._value = bytes._from_ints(values, len(values))
+
+    def __init__(self, values: Set[int]):
+        self._value = bytes._from_ints(values, len(values))
+
+    @staticmethod
+    def _from_ints(values, size: int) -> str:
+        """bytes(iterable of ints), as in CPython: each value must be in range(0, 256)."""
+        data = Ptr[byte](size)
+        position = 0
+        for value in values:
+            if value < 0 or value > 255:
+                raise ValueError("bytes must be in range(0, 256)")
+            data[position] = byte(value)
+            position += 1
+        return str(data, size)
+
+    def __len__(self) -> int:
+        return self._value.len
+
+    def __bool__(self) -> bool:
+        return self._value.len > 0
+
+    def __getitem__(self, index: int) -> int:
+        size = self._value.len
+        position = index + size if index < 0 else index
+        if position < 0 or position >= size:
+            raise IndexError("index out of range")
+        return int(self._value.ptr[position])
+
+    def __getitem__(self, indices: Slice) -> bytes:
+        start, stop, step, length = indices.adjust_indices(self._value.len)
+        if length <= 0:
+            return bytes("")
+        if step == 1:
+            return bytes(str(self._value.ptr + start, length))
+        data = Ptr[byte](length)
+        for k in range(length):
+            data[k] = self._value.ptr[start + k * step]
+        return bytes(data, length)
+
+    def __iter__(self) -> Generator[int]:
+        for position in range(self._value.len):
+            yield int(self._value.ptr[position])
+
+    def __contains__(self, value: bytes) -> bool:
+        return value._value in self._value
+
+    def __contains__(self, value: int) -> bool:
+        return any(element == value for element in self)
+
+    def __eq__(self, other: bytes) -> bool:
+        return self._value == other._value
+
+    def __ne__(self, other: bytes) -> bool:
+        return self._value != other._value
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def __add__(self, other: bytes) -> bytes:
+        return bytes(self._value + other._value)
+
+    def __mul__(self, count: int) -> bytes:
+        return bytes(self._value * count) if count > 0 else bytes("")
+
+    def __rmul__(self, count: int) -> bytes:
+        return self * count
+
+    def __repr__(self) -> str:
+        """CPython's repr of bytes: printable ASCII stays, other bytes become \\xhh."""
+        found_single = False
+        found_double = False
+        for value in self:
+            if value == 39:
+                found_single = True
+            elif value == 34:
+                found_double = True
+        quote = '"' if found_single and not found_double else "'"
+        digits = "0123456789abcdef"
+        parts = ["b", quote]
+        for value in self:
+            if value == 92 or value == int(quote.ptr[0]):
+                parts.append("\\" + chr(value))
+            elif value == 9:
+                parts.append("\\t")
+            elif value == 10:
+                parts.append("\\n")
+            elif value == 13:
+                parts.append("\\r")
+            elif 32 <= value < 127:
+                parts.append(chr(value))
+            else:
+                parts.append("\\x" + digits[value >> 4] + digits[value & 0xF])
+        parts.append(quote)
+        return "".join(parts)
+
+    def __str__(self) -> str:
+        return repr(self)
+
+    def startswith(self, prefix: bytes) -> bool:
+        return self._value.startswith(prefix._value)
+
+    def endswith(self, suffix: bytes) -> bool:
+        return self._value.endswith(suffix._value)
+
+    def find(self, value: bytes) -> int:
+        """The byte offset of value, or -1."""
+        size = value._value.len
+        for position in range(self._value.len - size + 1):
+            if str(self._value.ptr + position, size) == value._value:
+                return position
+        return -1
+
+    def split(self, separator: bytes) -> List[bytes]:
+        return [bytes(part) for part in self._value.split(separator._value)]
+
+    def strip(self) -> bytes:
+        start = 0
+        end = self._value.len
+        while start < end and _bytes_ascii_space(int(self._value.ptr[start])):
+            start += 1
+        while end > start and _bytes_ascii_space(int(self._value.ptr[end - 1])):
+            end -= 1
+        return bytes(str(self._value.ptr + start, end - start))
+
+    def rstrip(self, chars: bytes) -> bytes:
+        end = self._value.len
+        while end > 0 and int(self._value.ptr[end - 1]) in chars:
+            end -= 1
+        return bytes(str(self._value.ptr, end))
+
+    def _ascii_case(self, upper: bool) -> bytes:
+        """bytes.lower() and bytes.upper() change ASCII letters only."""
+        size = self._value.len
+        data = Ptr[byte](size)
+        for position in range(size):
+            value = int(self._value.ptr[position])
+            if upper and 97 <= value <= 122:
+                value -= 32
+            elif not upper and 65 <= value <= 90:
+                value += 32
+            data[position] = byte(value)
+        return bytes(data, size)
+
+    def lower(self) -> bytes:
+        return self._ascii_case(False)
+
+    def upper(self) -> bytes:
+        return self._ascii_case(True)
+
+    def replace(self, old: bytes, new: bytes) -> bytes:
+        return bytes(self._value._replace(old._value, new._value, -1))
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        if encoding.lower() not in ("utf-8", "utf8") or errors != "strict":
+            raise ValueError("bytes.decode only supports strict UTF-8")
+        if not _bytes_valid_utf8(self._value.ptr, self._value.len):
+            raise ValueError("invalid UTF-8")
+        return self._value
+
+    def hex(self) -> str:
+        digits = "0123456789abcdef"
+        size = self._value.len
+        data = Ptr[byte](2 * size)
+        for position in range(size):
+            value = int(self._value.ptr[position])
+            data[2 * position] = digits.ptr[value >> 4]
+            data[2 * position + 1] = digits.ptr[value & 0xF]
+        return str(data, 2 * size)
+
+    @staticmethod
+    def fromhex(text: str) -> bytes:
+        """Pairs of hex digits; ASCII whitespace between pairs is skipped, as in CPython."""
+        data = Ptr[byte](text.len // 2 + 1)
+        size = 0
+        position = 0
+        while position < text.len:
+            value = int(text.ptr[position])
+            if _bytes_ascii_space(value):
+                position += 1
+                continue
+            high = _bytes_hex_digit(value)
+            low = _bytes_hex_digit(int(text.ptr[position + 1])) if position + 1 < text.len else -1
+            if high < 0 or low < 0:
+                raise ValueError("non-hexadecimal number found in fromhex() arg at position " +
+                                 str(position if high < 0 else position + 1))
+            data[size] = byte(high * 16 + low)
+            size += 1
+            position += 2
+        return bytes(data, size)
+
+
+def _bytes_hex_digit(value: int) -> int:
+    if 48 <= value <= 57:
+        return value - 48
+    if 97 <= value <= 102:
+        return value - 87
+    if 65 <= value <= 70:
+        return value - 55
+    return -1
+
+
+@extend
+class str:
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        return bytes(self)
+
+
+def _bytes_check_byteorder(byteorder: str):
+    if byteorder != "big" and byteorder != "little":
+        raise ValueError("byteorder must be either 'little' or 'big'")
+
+
+@extend
+class int:
+    """int.from_bytes and int.to_bytes. A Codon int has 64 bits: a value that needs more raises OverflowError, where
+    CPython gives a larger int (e.g. an IPv6 address of 16 bytes)."""
+
+    @staticmethod
+    def from_bytes(data, byteorder: str = "big", signed: bool = False) -> int:
+        """data is bytes or an iterable of ints in range(0, 256), as in CPython."""
+        _bytes_check_byteorder(byteorder)
+        big = byteorder == "big"
+        result = 0
+        count = 0
+        last = 0
+        for element in data:
+            value = int(element)
+            if value < 0 or value > 255:
+                raise ValueError("bytes must be in range(0, 256)")
+            if big:
+                if (result >> 56) & 0xFF != 0 or (count >= 8 and result < 0):
+                    raise OverflowError("int.from_bytes: the value needs more than the 64 bits of a Codon int")
+                result = (result << 8) | value
+                last = value if count == 0 else last
+            else:
+                if count >= 8:
+                    if value != 0:
+                        raise OverflowError("int.from_bytes: the value needs more than the 64 bits of a Codon int")
+                else:
+                    result |= value << (8 * count)
+                last = value
+            count += 1
+        # last: the most significant byte
+        if signed and count > 0 and count < 8 and last & 0x80:
+            result -= 1 << (8 * count)
+        elif not signed and count >= 8 and result < 0:
+            raise OverflowError("int.from_bytes: the value needs more than the 64 bits of a Codon int")
+        return result
+
+    def to_bytes(self, length: int = 1, byteorder: str = "big", signed: bool = False) -> bytes:
+        _bytes_check_byteorder(byteorder)
+        if length < 0:
+            raise ValueError("length argument must be non-negative")
+        if not signed and self < 0:
+            raise OverflowError("can't convert negative int to unsigned")
+        if length < 8:
+            limit = 1 << (8 * length)
+            if (signed and not (-(limit >> 1) <= self < (limit >> 1))) or (not signed and self >= limit):
+                raise OverflowError("int too big to convert")
+        data = Ptr[byte](length)
+        value = self
+        for k in range(length):
+            # bytes beyond the 64 bits repeat the sign
+            b = byte(value & 0xFF) if k < 8 else byte(0xFF if self < 0 else 0)
+            data[length - 1 - k if byteorder == "big" else k] = b
+            value >>= 8
+        return bytes(data, length)
+
+
+class bytearray:
+    """A mutable sequence of bytes. _value gives the bytes as a str without a copy (np.frombuffer and bytes() read it);
+    the str is only valid until the next append, extend or resize."""
+    _data: Ptr[byte]
+    _len: int
+    _cap: int
+
+    def __init__(self):
+        self._data = Ptr[byte]()
+        self._len = 0
+        self._cap = 0
+
+    def __init__(self, size: int):
+        if size < 0:
+            raise ValueError("negative count")
+        self._data = Ptr[byte](size)
+        for k in range(size):
+            self._data[k] = byte(0)
+        self._len = size
+        self._cap = size
+
+    def __init__(self, value: bytes):
+        self._from_str(value._value)
+
+    def __init__(self, value: bytearray):
+        self._from_str(value._value)
+
+    def __init__(self, values: List[int]):
+        self._from_str(bytes._from_ints(values, len(values)))
+
+    def __init__(self, value: str, encoding: str, errors: str = "strict"):
+        if encoding.lower() not in ("utf-8", "utf8"):
+            raise ValueError("bytearray only supports UTF-8 text")
+        self._from_str(value)
+
+    def _from_str(self, value: str):
+        self._data = Ptr[byte](value.len)
+        str.memcpy(self._data, value.ptr, value.len)
+        self._len = value.len
+        self._cap = value.len
+
+    @property
+    def _value(self) -> str:
+        return str(self._data, self._len)
+
+    def _reserve(self, size: int):
+        if size > self._cap:
+            capacity = max(size, 2 * self._cap, 8)
+            data = Ptr[byte](capacity)
+            str.memcpy(data, self._data, self._len)
+            self._data = data
+            self._cap = capacity
+
+    def __len__(self) -> int:
+        return self._len
+
+    def __bool__(self) -> bool:
+        return self._len > 0
+
+    def __getitem__(self, index: int) -> int:
+        position = index + self._len if index < 0 else index
+        if position < 0 or position >= self._len:
+            raise IndexError("bytearray index out of range")
+        return int(self._data[position])
+
+    def __getitem__(self, indices: Slice) -> bytearray:
+        return bytearray(bytes(self._value)[indices])
+
+    def __setitem__(self, index: int, value: int):
+        position = index + self._len if index < 0 else index
+        if position < 0 or position >= self._len:
+            raise IndexError("bytearray index out of range")
+        if value < 0 or value > 255:
+            raise ValueError("byte must be in range(0, 256)")
+        self._data[position] = byte(value)
+
+    def __iter__(self) -> Generator[int]:
+        for position in range(self._len):
+            yield int(self._data[position])
+
+    def __eq__(self, other: bytearray) -> bool:
+        return self._value == other._value
+
+    def __eq__(self, other: bytes) -> bool:
+        return self._value == other._value
+
+    def __ne__(self, other) -> bool:
+        return not (self == other)
+
+    def append(self, value: int):
+        if value < 0 or value > 255:
+            raise ValueError("byte must be in range(0, 256)")
+        self._reserve(self._len + 1)
+        self._data[self._len] = byte(value)
+        self._len += 1
+
+    def extend(self, values):
+        if isinstance(values, bytes) or isinstance(values, bytearray):
+            text = values._value
+            self._reserve(self._len + text.len)
+            str.memcpy(self._data + self._len, text.ptr, text.len)
+            self._len += text.len
+        else:
+            for value in values:
+                self.append(value)
+
+    def __iadd__(self, other):
+        self.extend(other)
+        return self
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        return bytes(self._value).decode(encoding, errors)
+
+    def hex(self) -> str:
+        return bytes(self._value).hex()
+
+    def __repr__(self) -> str:
+        return "bytearray(" + bytes(self._value).__repr__() + ")"
+
+
+@extend
+class bytes:
+    def __init__(self, value: bytearray):
+        # a copy: the bytearray may change later
+        data = Ptr[byte](len(value))
+        str.memcpy(data, value._data, len(value))
+        self._value = str(data, len(value))
