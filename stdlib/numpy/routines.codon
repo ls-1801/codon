@@ -699,19 +699,14 @@ def fromiter(iterable, dtype: type, count: int = -1):
                 raise ValueError(f'iterator too short: Expected {count} but iterator had only {i} items.')
         return result
 
-def frombuffer(buffer: str, dtype: type = float, count: int = -1, offset: int = 0):
-    # the bytes of the str count, not its code points
+def frombuffer(buffer, dtype: type = float, count: int = -1, offset: int = 0):
+    # buffer is a str, bytes or bytearray: its bytes count, not its code points
+    data = buffer if isinstance(buffer, str) else buffer._value
     if count < 0:
-        count = (buffer.len - offset) // util.sizeof(dtype)
+        count = (data.len - offset) // util.sizeof(dtype)
 
-    p = Ptr[dtype](buffer.ptr + offset)
+    p = Ptr[dtype](data.ptr + offset)
     return ndarray((count,), p)
-
-def frombuffer(buffer: bytes, dtype: type = float, count: int = -1, offset: int = 0):
-    return frombuffer(buffer._value, dtype, count, offset)
-
-def frombuffer(buffer: bytearray, dtype: type = float, count: int = -1, offset: int = 0):
-    return frombuffer(buffer._value, dtype, count, offset)
 
 ################
 # Broadcasting #
