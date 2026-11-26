@@ -204,6 +204,64 @@ def _pairwise_sum(a: Ptr[T], n: int, stride: int, T: type, dtype: type = NoneTyp
         return (_pairwise_sum(a, n2, stride, dtype=dtype) +
                 _pairwise_sum(Ptr[T](p + n2 * stride), n - n2, stride, dtype=dtype))
 
+def _pairwise_sum_sq(a: Ptr[T], n: int, stride: int, u, T: type):
+    # The sum of (a[i] - u)**2 in the type of u, in the order of _pairwise_sum: numpy's var sums the squared
+    # deviations with its pairwise sum, so the result rounds as numpy's does; the 8 accumulators also vectorize.
+    Z = type(u)
+    PW_BLOCKSIZE: Literal[int] = 128
+    p = a.as_byte()
+
+    if n < 8:
+        res = Z(-0.0)
+        for i in range(n):
+            t = util.cast(Ptr[T](p + i * stride)[0], Z) - u
+            res += t * t
+        return res
+    elif n <= PW_BLOCKSIZE:
+        t0 = util.cast(Ptr[T](p + 0 * stride)[0], Z) - u
+        t1 = util.cast(Ptr[T](p + 1 * stride)[0], Z) - u
+        t2 = util.cast(Ptr[T](p + 2 * stride)[0], Z) - u
+        t3 = util.cast(Ptr[T](p + 3 * stride)[0], Z) - u
+        t4 = util.cast(Ptr[T](p + 4 * stride)[0], Z) - u
+        t5 = util.cast(Ptr[T](p + 5 * stride)[0], Z) - u
+        t6 = util.cast(Ptr[T](p + 6 * stride)[0], Z) - u
+        t7 = util.cast(Ptr[T](p + 7 * stride)[0], Z) - u
+        r0, r1, r2, r3 = t0 * t0, t1 * t1, t2 * t2, t3 * t3
+        r4, r5, r6, r7 = t4 * t4, t5 * t5, t6 * t6, t7 * t7
+
+        i = 8
+        while i < n - (n & 7):
+            t0 = util.cast(Ptr[T](p + (i + 0) * stride)[0], Z) - u
+            t1 = util.cast(Ptr[T](p + (i + 1) * stride)[0], Z) - u
+            t2 = util.cast(Ptr[T](p + (i + 2) * stride)[0], Z) - u
+            t3 = util.cast(Ptr[T](p + (i + 3) * stride)[0], Z) - u
+            t4 = util.cast(Ptr[T](p + (i + 4) * stride)[0], Z) - u
+            t5 = util.cast(Ptr[T](p + (i + 5) * stride)[0], Z) - u
+            t6 = util.cast(Ptr[T](p + (i + 6) * stride)[0], Z) - u
+            t7 = util.cast(Ptr[T](p + (i + 7) * stride)[0], Z) - u
+            r0 += t0 * t0
+            r1 += t1 * t1
+            r2 += t2 * t2
+            r3 += t3 * t3
+            r4 += t4 * t4
+            r5 += t5 * t5
+            r6 += t6 * t6
+            r7 += t7 * t7
+            i += 8
+
+        res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
+        while i < n:
+            t = util.cast(Ptr[T](p + i * stride)[0], Z) - u
+            res += t * t
+            i += 1
+
+        return res
+    else:
+        n2 = n >> 1
+        n2 -= n2 & 7
+        return (_pairwise_sum_sq(a, n2, stride, u) +
+                _pairwise_sum_sq(Ptr[T](p + n2 * stride), n - n2, stride, u))
+
 def _empty_like(arr, shape, dtype: type):
     fcontig = arr._should_transpose()
     p = Ptr[dtype](util.count(shape))
@@ -1834,15 +1892,15 @@ def _var_reducer(p: Ptr[T], s: int, n: int, dtype: type, T: type, **kwargs):
     else:
         v = zero
 
-    q = p
-    for _ in range(n):
-        t = util.cast(q[0], Z) - u
-        if Z is complex or Z is complex64:
+    if Z is complex or Z is complex64:
+        q = p
+        for _ in range(n):
+            t = util.cast(q[0], Z) - u
             r = abs(t)
             v += r * r
-        else:
-            v += t * t
-        q = _increment_ptr(q, s)
+            q = _increment_ptr(q, s)
+    else:
+        v = _pairwise_sum_sq(p, n, s, u)
 
     v /= util.cast(n - kwargs['ddof'], type(v))
     return v
