@@ -111,7 +111,7 @@ def _extract_sequences(indexes):
         return rest
 
 def _adv_idx_convert(idx):
-    if idx is None or isinstance(idx, slice) or isinstance(idx, int):
+    if idx is None or isinstance(idx, slice) or isinstance(idx, int) or isinstance(idx, type(Ellipsis)):
         return idx
     elif isinstance(idx, ndarray) or isinstance(idx, List) or isinstance(idx, Tuple):
         arr = asarray(idx)
@@ -311,6 +311,108 @@ def _broadcast_shapes(*args):
 
     return ans
 
+def _adv_idx_offsets(lengths: Ptr[int], strides: Ptr[int], first: int, last: int):
+    # The byte offsets of all positions of the axes first..last-1 (C order), and their number.
+    count = 1
+    for a in range(first, last):
+        count *= lengths[a]
+    offsets = Ptr[int](count if count > 0 else 1)
+    if count == 0:
+        return offsets, 0
+    counter = Ptr[int](last - first if last > first else 1)
+    for a in range(last - first):
+        counter[a] = 0
+    offset = 0
+    for i in range(count):
+        offsets[i] = offset
+        a = last - 1
+        while a >= first:
+            counter[a - first] += 1
+            offset += strides[a]
+            if counter[a - first] < lengths[a]:
+                break
+            offset -= strides[a] * lengths[a]
+            counter[a - first] = 0
+            a -= 1
+    return offsets, count
+
+def _adv_idx_separated(indexes, k: Literal[int] = 0, last: Literal[int] = -1, seen: Literal[bool] = False):
+    # Whether the advanced indices (arrays and integers) at the positions of the index tuple are not all adjacent.
+    if static.len(indexes) == 0:
+        return False
+    else:
+        idx = indexes[0]
+        if isinstance(idx, ndarray) or isinstance(idx, int):
+            if seen and last != k - 1:
+                return True
+            else:
+                return _adv_idx_separated(indexes[1:], k + 1, k, True)
+        else:
+            return _adv_idx_separated(indexes[1:], k + 1, last, seen)
+
+def _adv_idx_take(arr, index, axis: int, index_non_arrays, non_arrays_where, ans):
+    # Fast path of a get with one 1-D integer index array (at `axis`) and slices on all other axes: the copy loops work on
+    # byte offsets, instead of an index tuple and a generator per element. A block of contiguous elements behind the
+    # index axis is copied at once, as numpy's mapiter does.
+    N: Literal[int] = static.len(arr.shape)
+    shape = arr.shape
+    strides = arr.strides
+    pshape = Ptr[int](__ptr__(shape).as_byte())
+    pstrides = Ptr[int](__ptr__(strides).as_byte())
+    lengths = Ptr[int](N)
+    steps = Ptr[int](N)
+    base = 0
+    for i in static.range(static.len(index_non_arrays)):
+        a = non_arrays_where[i]
+        start, stop, step, length = index_non_arrays[i].adjust_indices(pshape[a])
+        base += start * pstrides[a]
+        steps[a] = step * pstrides[a]
+        lengths[a] = length
+    lengths[axis] = 1
+    steps[axis] = 0
+
+    itemsize = arr.itemsize
+    contiguous = True
+    expected = itemsize
+    for a in range(N - 1, axis, -1):
+        if lengths[a] != 1:
+            if steps[a] != expected:
+                contiguous = False
+            expected *= lengths[a]
+
+    outer, n_outer = _adv_idx_offsets(lengths, steps, 0, axis)
+    inner, n_inner = _adv_idx_offsets(lengths, steps, axis + 1, N)
+    n = index.size
+    if n_outer == 0 or n_inner == 0 or n == 0:
+        return
+
+    dim = pshape[axis]
+    index_offsets = Ptr[int](n)
+    index_stride = index.strides[0]
+    index_data = index.data.as_byte()
+    for j in range(n):
+        index_offsets[j] = util.normalize_index(Ptr[int](index_data + j * index_stride)[0], axis, dim) * pstrides[axis]
+
+    src = arr.data.as_byte() + base
+    dst = ans.data
+    block = n_inner * itemsize
+    for o in range(n_outer):
+        row = src + outer[o]
+        if n_inner == 1:
+            for j in range(n):
+                dst[j] = Ptr[arr.dtype](row + index_offsets[j])[0]
+            dst += n
+        elif contiguous:
+            for j in range(n):
+                str.memcpy(dst.as_byte(), row + index_offsets[j], block)
+                dst += n_inner
+        else:
+            for j in range(n):
+                p = row + index_offsets[j]
+                for t in range(n_inner):
+                    dst[t] = Ptr[arr.dtype](p + inner[t])[0]
+                dst += n_inner
+
 def _getset_advanced(arr, indexes, item, dtype: type):
     indexes = tuple(_adv_idx_convert(idx) for idx in indexes)
     indexes = _adv_idx_replace_bools(indexes)
@@ -333,6 +435,10 @@ def _getset_advanced(arr, indexes, item, dtype: type):
                                   - static.len(indexes)
                                   + static.len(newaxis_tuple))
 
+    # integer indices are advanced indices too: if they and the index arrays are not adjacent, the broadcast index
+    # dimensions go to the front (numpy), also after the integer indices are eliminated below
+    advanced_separated = _adv_idx_separated(indexes)
+
     # eliminate newaxis and used axes (i.e. integer indices)
     arr, indexes = _adv_idx_eliminate_new_and_used(arr, indexes)
     shape = arr.shape
@@ -347,7 +453,7 @@ def _getset_advanced(arr, indexes, item, dtype: type):
     # which indices are not array-like?
     index_non_arrays, non_arrays_where = _adv_idx_gather_non_arrays(indexes)
 
-    arrays_at_front = False
+    arrays_at_front = advanced_separated
     for i in static.range(1, static.len(arrays_where)):
         if arrays_where[i] != arrays_where[i - 1] + 1:
             arrays_at_front = True
@@ -363,6 +469,11 @@ def _getset_advanced(arr, indexes, item, dtype: type):
     if item is None:
         ans = empty(ans_shape, dtype)
         item_arr = None
+        if static.len(index_arrays) == 1:
+            if static.len(index_arrays[0].shape) == 1:
+                if dtype is arr.dtype and not arrays_at_front:
+                    _adv_idx_take(arr, index_arrays[0], arrays_where[0], index_non_arrays, non_arrays_where, ans)
+                    return ans
     else:
         ans = None
         item_arr = broadcast_to(asarray(item), ans_shape)
