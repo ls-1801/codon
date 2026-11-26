@@ -32,10 +32,23 @@ def _inner_type(t):
     else:
         return t
 
+def _empty_rest_shape(E: type):
+    # The shape below the elements of an empty list with elements of type E: zeros, one per dimension, as there is no
+    # element to measure. NumPy gives an empty list of lists the shape (0,); here the rank is static, so (0, 0).
+    if isinstance(E, List):
+        return (0, *_empty_rest_shape(E.T))
+    elif isinstance(E, ndarray):
+        return (0,) * E.ndim
+    else:
+        return ()
+
 def _extract_shape(t):
     if isinstance(t, ndarray):
         return t.shape
     elif isinstance(t, List) or isinstance(t, Tuple):
+        if isinstance(t, List):
+            if len(t) == 0:
+                return (0, *_empty_rest_shape(type(t[0])))
         rest = _extract_shape(t[0])
         return (len(t), *rest)
     else:
