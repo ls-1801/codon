@@ -1992,21 +1992,25 @@ void LLVMVisitor::visit(const BodiedFunc *x) {
   auto argIter = func->arg_begin();
   for (auto varIter = x->arg_begin(); varIter != x->arg_end(); ++varIter) {
     const Var *var = *varIter;
-    auto *storage = B->CreateAlloca(getLLVMType(var->getType()));
+    auto *argType = getLLVMType(var->getType());
+    auto *storage = B->CreateAlloca(argType);
     B->CreateStore(argIter, storage);
     insertVar(var, storage);
 
-    // debug info
-    auto *srcInfo = getSrcInfo(var);
-    auto *file = db.getFile(srcInfo->file);
-    auto *scope = func->getSubprogram();
-    auto *debugVar = db.builder->createParameterVariable(
-        scope, getDebugNameForVariable(var), argIdx, file, srcInfo->line,
-        getDIType(var->getType()), db.debug);
-    db.builder->insertDeclare(
-        storage, debugVar, db.builder->createExpression(),
-        llvm::DILocation::get(*context, srcInfo->line, srcInfo->col, scope),
-        entryBlock);
+    // debug info (none for a zero-size value, e.g. the shape of a 0-d array: LLVM 22's instruction selection crashes
+    // on a dbg_value of an empty struct constant that an insertvalue also uses)
+    if (!M->getDataLayout().getTypeAllocSize(argType).isZero()) {
+      auto *srcInfo = getSrcInfo(var);
+      auto *file = db.getFile(srcInfo->file);
+      auto *scope = func->getSubprogram();
+      auto *debugVar = db.builder->createParameterVariable(
+          scope, getDebugNameForVariable(var), argIdx, file, srcInfo->line,
+          getDIType(var->getType()), db.debug);
+      db.builder->insertDeclare(
+          storage, debugVar, db.builder->createExpression(),
+          llvm::DILocation::get(*context, srcInfo->line, srcInfo->col, scope),
+          entryBlock);
+    }
 
     ++argIter;
     ++argIdx;
@@ -2020,7 +2024,9 @@ void LLVMVisitor::visit(const BodiedFunc *x) {
       auto *storage = B->CreateAlloca(llvmType);
       insertVar(var, storage);
 
-      // debug info
+      // debug info (none for a zero-size value, see the arguments above)
+      if (M->getDataLayout().getTypeAllocSize(llvmType).isZero())
+        continue;
       auto *srcInfo = getSrcInfo(var);
       auto *file = db.getFile(srcInfo->file);
       auto *scope = func->getSubprogram();
