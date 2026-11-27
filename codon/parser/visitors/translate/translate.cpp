@@ -55,8 +55,16 @@ ir::Func *TranslateVisitor::apply(Cache *cache, Stmt *stmts) {
 void TranslateVisitor::translateStmts(Stmt *stmts) const {
   initializeGlobals();
   TranslateVisitor(ctx->cache->codegenCtx).transform(stmts);
-  for (auto &f : ctx->cache->functions | std::views::values)
-    TranslateVisitor(ctx->cache->codegenCtx).transform(f.ast);
+  // Only functions with pending realizations have something to translate. Visiting every function of the cache
+  // made each call (e.g. each kernel that an IR pass realizes) cost as much as the whole stdlib.
+  std::set<std::string> names;
+  for (const auto &name : ctx->cache->pendingRealizations | std::views::keys)
+    names.insert(name);
+  for (const auto &name : names) {
+    auto f = ctx->cache->functions.find(name);
+    if (f != ctx->cache->functions.end())
+      TranslateVisitor(ctx->cache->codegenCtx).transform(f->second.ast);
+  }
 }
 
 void TranslateVisitor::initializeGlobals() const {
