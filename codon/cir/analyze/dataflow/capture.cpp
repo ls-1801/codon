@@ -45,20 +45,28 @@ struct CaptureContext;
 
 bool extractVars(CaptureContext &cc, const Value *v, std::vector<const Var *> &result);
 
-bool reachable(CFBlock *start, CFBlock *end, std::unordered_set<CFBlock *> &seen) {
-  if (start == end)
-    return true;
+using ReachableSets = std::unordered_map<CFBlock *, std::unordered_set<CFBlock *>>;
 
-  if (seen.count(start))
-    return false;
-
-  seen.insert(start);
-  for (auto it = start->successors_begin(); it != start->successors_end(); ++it) {
-    if (reachable(*it, end, seen))
-      return true;
+// The blocks reachable from `start`, `start` included; computed once per block and analysis.
+const std::unordered_set<CFBlock *> &reachableFrom(CFBlock *start, ReachableSets &cache) {
+  auto it = cache.find(start);
+  if (it != cache.end())
+    return it->second;
+  std::unordered_set<CFBlock *> seen = {start};
+  std::vector<CFBlock *> work = {start};
+  while (!work.empty()) {
+    auto *block = work.back();
+    work.pop_back();
+    for (auto succ = block->successors_begin(); succ != block->successors_end(); ++succ) {
+      if (seen.insert(*succ).second)
+        work.push_back(*succ);
+    }
   }
+  return cache.emplace(start, std::move(seen)).first->second;
+}
 
-  return false;
+bool reachable(CFBlock *start, CFBlock *end, ReachableSets &cache) {
+  return reachableFrom(start, cache).count(end) > 0;
 }
 
 // Check if one value must always be encountered before another, if
@@ -66,7 +74,7 @@ bool reachable(CFBlock *start, CFBlock *end, std::unordered_set<CFBlock *> &seen
 // since we can have "(if _: B) ; A", where B does not dominate A yet
 // must always occur before A is it does occur.
 bool happensBefore(const Value *before, const Value *after, CFGraph *cfg,
-                   DominatorInspector *dom) {
+                   DominatorInspector *dom, ReachableSets &reachableSets) {
   auto *beforeBlock = cfg->getBlock(before);
   auto *afterBlock = cfg->getBlock(after);
 
@@ -89,8 +97,8 @@ bool happensBefore(const Value *before, const Value *after, CFGraph *cfg,
   // If we have different blocks, then either 'before' dominates
   // 'after', in which case the answer is true, or there must be
   // no paths from 'afterBlock' to 'beforeBlock'.
-  std::unordered_set<CFBlock *> seen;
-  return dom->isDominated(after, before) || !reachable(afterBlock, beforeBlock, seen);
+  return dom->isDominated(after, before) ||
+         !reachable(afterBlock, beforeBlock, reachableSets);
 }
 
 struct RDManager {
@@ -383,6 +391,7 @@ struct CaptureTracker : public util::Operator {
   CFGraph *cfg;
   RDManager rd;
   DominatorInspector *dom;
+  ReachableSets reachableSets;
   std::vector<DerivedSet> dsets;
 
   CaptureTracker(CaptureContext &cc, const Func *func, bool isArg)
@@ -479,7 +488,7 @@ struct CaptureTracker : public util::Operator {
 
       for (auto *toCause : toCauses) {
         if (isA<AssignInstr>(toCause) || isA<SyntheticAssignInstr>(toCause) ||
-            happensBefore(toCause, cause, cfg, dom))
+            happensBefore(toCause, cause, cfg, dom, reachableSets))
           continue;
 
         bool derived = false;
