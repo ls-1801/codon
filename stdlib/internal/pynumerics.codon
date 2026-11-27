@@ -217,3 +217,68 @@ class float:
         if self >= 9.223372036854775808e18 or self < -9.223372036854775808e18:
             raise OverflowError("float is out of the range of a 64-bit int")
         return _fptosi_float(self)
+
+@pure
+@llvm
+def _frem_float32(a: float32, b: float32) -> float32:
+    %0 = frem float %a, %b
+    ret float %0
+
+@pure
+@llvm
+def _frem_float16(a: float16, b: float16) -> float16:
+    %0 = frem half %a, %b
+    ret half %0
+
+def _np_divmod(a, b, mod):
+    """NumPy's npy_divmod for a float32 or float16 (the algorithm of their __divmod__) from mod = fmod(a, b); by zero
+    a / b and the NaN of fmod."""
+    T = type(a)
+    if b == T(0.0):
+        return (a / b, mod)
+    div = (a - mod) / b
+    if mod:
+        if (b < T(0.0)) != (mod < T(0.0)):
+            mod += b
+            div -= T(1.0)
+    else:
+        mod = T(0.0).copysign(b)
+    floordiv = T(0.0)
+    if div:
+        floordiv = div.__floor__()
+        if div - floordiv > T(0.5):
+            floordiv += T(1.0)
+    else:
+        floordiv = T(0.0).copysign(a / b)
+    return (floordiv, mod)
+
+# NebulaStream: int() of a float32 or float16 checks as int() of a float (CPython: int(np.float32("nan")) raises).
+# %, // and divmod of float32 and float16 have the floor semantics of NumPy's remainder and floor_divide (the sign of the result
+# follows the divisor); by zero NumPy gives a / b and NaN without an error.
+@extend
+class float32:
+    def __int__(self) -> int:
+        return float(self).__int__()
+
+    def __floordiv__(self, other: float32) -> float32:
+        return _np_divmod(self, other, _frem_float32(self, other))[0]
+
+    def __mod__(self, other: float32) -> float32:
+        return _np_divmod(self, other, _frem_float32(self, other))[1]
+
+    def __divmod__(self, other: float32) -> Tuple[float32, float32]:
+        return _np_divmod(self, other, _frem_float32(self, other))
+
+@extend
+class float16:
+    def __int__(self) -> int:
+        return float(self).__int__()
+
+    def __floordiv__(self, other: float16) -> float16:
+        return _np_divmod(self, other, _frem_float16(self, other))[0]
+
+    def __mod__(self, other: float16) -> float16:
+        return _np_divmod(self, other, _frem_float16(self, other))[1]
+
+    def __divmod__(self, other: float16) -> Tuple[float16, float16]:
+        return _np_divmod(self, other, _frem_float16(self, other))

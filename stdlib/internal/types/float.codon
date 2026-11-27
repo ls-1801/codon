@@ -892,6 +892,65 @@ class float32:
     def __pow__(self: float32, b: int) -> float32:
         return _float_int_pow(self, b)
 
+    # NebulaStream: float32 with a Python float as NumPy 2 (NEP 50): the float becomes float32 first.
+    @commutative
+    @overload
+    def __add__(self: float32, b: float) -> float32:
+        return self.__add__(float32(b))
+
+    @overload
+    def __sub__(self: float32, b: float) -> float32:
+        return self.__sub__(float32(b))
+
+    @commutative
+    @overload
+    def __mul__(self: float32, b: float) -> float32:
+        return self.__mul__(float32(b))
+
+    @overload
+    def __floordiv__(self: float32, b: float) -> float32:
+        return self.__floordiv__(float32(b))
+
+    @overload
+    def __truediv__(self: float32, b: float) -> float32:
+        return self.__truediv__(float32(b))
+
+    @overload
+    def __mod__(self: float32, b: float) -> float32:
+        return self.__mod__(float32(b))
+
+    @overload
+    def __divmod__(self: float32, b: float):
+        return self.__divmod__(float32(b))
+
+    @overload
+    def __pow__(self: float32, b: float) -> float32:
+        return self ** float32(b)
+
+    @overload
+    def __eq__(self: float32, b: float) -> bool:
+        return self.__eq__(float32(b))
+
+    @overload
+    def __ne__(self: float32, b: float) -> bool:
+        return self.__ne__(float32(b))
+
+    @overload
+    def __lt__(self: float32, b: float) -> bool:
+        return self.__lt__(float32(b))
+
+    @overload
+    def __gt__(self: float32, b: float) -> bool:
+        return self.__gt__(float32(b))
+
+    @overload
+    def __le__(self: float32, b: float) -> bool:
+        return self.__le__(float32(b))
+
+    @overload
+    def __ge__(self: float32, b: float) -> bool:
+        return self.__ge__(float32(b))
+
 @extend
 class float16:
     @pure
@@ -1252,6 +1311,65 @@ class float16:
     @overload
     def __pow__(self: float16, b: int) -> float16:
         return _float_int_pow(self, b)
+
+    # NebulaStream: float16 with a Python float as NumPy 2 (NEP 50): the float becomes float16 first.
+    @commutative
+    @overload
+    def __add__(self: float16, b: float) -> float16:
+        return self.__add__(float16(b))
+
+    @overload
+    def __sub__(self: float16, b: float) -> float16:
+        return self.__sub__(float16(b))
+
+    @commutative
+    @overload
+    def __mul__(self: float16, b: float) -> float16:
+        return self.__mul__(float16(b))
+
+    @overload
+    def __floordiv__(self: float16, b: float) -> float16:
+        return self.__floordiv__(float16(b))
+
+    @overload
+    def __truediv__(self: float16, b: float) -> float16:
+        return self.__truediv__(float16(b))
+
+    @overload
+    def __mod__(self: float16, b: float) -> float16:
+        return self.__mod__(float16(b))
+
+    @overload
+    def __divmod__(self: float16, b: float):
+        return self.__divmod__(float16(b))
+
+    @overload
+    def __pow__(self: float16, b: float) -> float16:
+        return self ** float16(b)
+
+    @overload
+    def __eq__(self: float16, b: float) -> bool:
+        return self.__eq__(float16(b))
+
+    @overload
+    def __ne__(self: float16, b: float) -> bool:
+        return self.__ne__(float16(b))
+
+    @overload
+    def __lt__(self: float16, b: float) -> bool:
+        return self.__lt__(float16(b))
+
+    @overload
+    def __gt__(self: float16, b: float) -> bool:
+        return self.__gt__(float16(b))
+
+    @overload
+    def __le__(self: float16, b: float) -> bool:
+        return self.__le__(float16(b))
+
+    @overload
+    def __ge__(self: float16, b: float) -> bool:
+        return self.__ge__(float16(b))
 
 @extend
 class bfloat16:
@@ -2224,3 +2342,118 @@ bf16 = bfloat16
 f32 = float32
 f64 = float
 f128 = float128
+
+# NebulaStream: a Python float with float32 and float16 as NumPy 2 (NEP 50).
+@extend
+class float:
+    @overload
+    def __add__(self, b: float32) -> float32:
+        return float32(self).__add__(b)
+
+    @overload
+    def __mul__(self, b: float32) -> float32:
+        return float32(self).__mul__(b)
+
+    @overload
+    def __sub__(self, b: float32) -> float32:
+        return float32(self).__sub__(b)
+
+    @overload
+    def __floordiv__(self, b: float32) -> float32:
+        return float32(self).__floordiv__(b)
+
+    @overload
+    def __truediv__(self, b: float32) -> float32:
+        return float32(self).__truediv__(b)
+
+    @overload
+    def __mod__(self, b: float32) -> float32:
+        return float32(self).__mod__(b)
+
+    @overload
+    def __divmod__(self, b: float32):
+        return float32(self).__divmod__(b)
+
+    @overload
+    def __pow__(self, b: float32) -> float32:
+        return float32(self) ** b
+
+    @overload
+    def __eq__(self, b: float32) -> bool:
+        return float32(self).__eq__(b)
+
+    @overload
+    def __ne__(self, b: float32) -> bool:
+        return float32(self).__ne__(b)
+
+    @overload
+    def __lt__(self, b: float32) -> bool:
+        return float32(self).__lt__(b)
+
+    @overload
+    def __gt__(self, b: float32) -> bool:
+        return float32(self).__gt__(b)
+
+    @overload
+    def __le__(self, b: float32) -> bool:
+        return float32(self).__le__(b)
+
+    @overload
+    def __ge__(self, b: float32) -> bool:
+        return float32(self).__ge__(b)
+
+    @overload
+    def __add__(self, b: float16) -> float16:
+        return float16(self).__add__(b)
+
+    @overload
+    def __mul__(self, b: float16) -> float16:
+        return float16(self).__mul__(b)
+
+    @overload
+    def __sub__(self, b: float16) -> float16:
+        return float16(self).__sub__(b)
+
+    @overload
+    def __floordiv__(self, b: float16) -> float16:
+        return float16(self).__floordiv__(b)
+
+    @overload
+    def __truediv__(self, b: float16) -> float16:
+        return float16(self).__truediv__(b)
+
+    @overload
+    def __mod__(self, b: float16) -> float16:
+        return float16(self).__mod__(b)
+
+    @overload
+    def __divmod__(self, b: float16):
+        return float16(self).__divmod__(b)
+
+    @overload
+    def __pow__(self, b: float16) -> float16:
+        return float16(self) ** b
+
+    @overload
+    def __eq__(self, b: float16) -> bool:
+        return float16(self).__eq__(b)
+
+    @overload
+    def __ne__(self, b: float16) -> bool:
+        return float16(self).__ne__(b)
+
+    @overload
+    def __lt__(self, b: float16) -> bool:
+        return float16(self).__lt__(b)
+
+    @overload
+    def __gt__(self, b: float16) -> bool:
+        return float16(self).__gt__(b)
+
+    @overload
+    def __le__(self, b: float16) -> bool:
+        return float16(self).__le__(b)
+
+    @overload
+    def __ge__(self, b: float16) -> bool:
+        return float16(self).__ge__(b)
