@@ -298,6 +298,26 @@ public:
     }
     types.erase(listIt);
   }
+  /// Removes the types that match a predicate, in one pass over the list and the map
+  /// (remove(types::Type *) searches both for each type). Map entries of a removed type
+  /// are all erased.
+  /// @param pred the predicate
+  void removeTypes(const std::function<bool(const types::Type *)> &pred) {
+    std::unordered_set<const types::Type *> removed;
+    for (const auto &owned : types) {
+      if (pred(owned.get()))
+        removed.insert(owned.get());
+    }
+    if (removed.empty())
+      return;
+    for (auto it = typesMap.begin(); it != typesMap.end();) {
+      if (removed.count(it->second->get()))
+        it = typesMap.erase(it);
+      else
+        ++it;
+    }
+    types.remove_if([&](const auto &owned) { return removed.count(owned.get()) != 0; });
+  }
 
   /// Constructs and registers an IR node with provided source information.
   /// @param s the source information
