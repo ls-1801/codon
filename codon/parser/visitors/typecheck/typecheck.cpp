@@ -1123,10 +1123,11 @@ TypecheckVisitor::extractNamedTuple(Expr *expr) {
 
 std::vector<Cache::Class::ClassField>
 TypecheckVisitor::getClassFields(types::ClassType *t) const {
-  auto f = getClass(t->name)->fields;
+  // A tuple has the first generics.size() fields of the tuple class: copy only those, not all fields first.
+  const auto &f = getClass(t->name)->fields;
   if (t->is(TYPE_TUPLE))
-    f = std::vector<Cache::Class::ClassField>(f.begin(),
-                                              f.begin() + t->generics.size());
+    return std::vector<Cache::Class::ClassField>(f.begin(),
+                                                 f.begin() + t->generics.size());
   return f;
 }
 
