@@ -626,8 +626,13 @@ def _reduce(arr,
                            bool_to_int=bool_to_int,
                            **kwargs)
 
+    # NebulaStream: as NumPy, a reduction without identity fails only if the reduced axes hold no elements (max of a
+    # (3, 0) array over axis 0 is an empty array; over axis 1 it fails).
     if empty is not None:
-        if arr.size == 0:
+        reduced = 1
+        for a in ax:
+            reduced *= shape[a]
+        if reduced == 0:
             empty(**kwargs)
 
     new_shape = (0, ) * (static.len(shape) - static.len(ax))

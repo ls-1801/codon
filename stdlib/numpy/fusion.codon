@@ -65,8 +65,11 @@ def _broadcast(sh1, sh2):
     def bc_one(sh1, sh2, i: Literal[int]):
         a = sh1[i]
         b = sh2[i]
-        if a == 1 or b == 1 or a == b:
-            return max(a, b)
+        # NebulaStream: a dimension of 1 takes the other one, also 0 (max(1, 0) gave 1 instead of 0).
+        if a == b or b == 1:
+            return a
+        elif a == 1:
+            return b
         else:
             raise ValueError(f"operands could not be broadcast together with shapes {sh1} {sh2}")
 
