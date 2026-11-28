@@ -39,6 +39,9 @@ def _empty_rest_shape(E: type):
         return (0, *_empty_rest_shape(E.T))
     elif isinstance(E, ndarray):
         return (0,) * E.ndim
+    elif isinstance(E, Tuple):
+        # As _extract_shape of a tuple: its static length, then the shape below its first item. type() reads no value.
+        return (static.len(E), *_empty_rest_shape(type(Ptr[E]()[0][0])))
     else:
         return ()
 
