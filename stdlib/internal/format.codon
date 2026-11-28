@@ -112,16 +112,38 @@ def _nes_spec_extras(spec: str) -> Tuple[str, bool, bool]:
     return spec, percent, underscore
 
 
+def _int_format(v: int, spec: str) -> str:
+    err = False
+    ret = _C.seq_str_int(v, _python_to_fmt_format(spec), __ptr__(err))
+    if spec and err:
+        _format_error(ret)
+    return ret
+
+def _float_format(v: float, spec: str) -> str:
+    err = False
+    ret = _C.seq_str_float(v, _python_to_fmt_format(spec), __ptr__(err))
+    if spec and err:
+        _format_error(ret)
+    if ret == "-nan":
+        ret = "nan"
+    return ret
+
+# NES: the '%' and '_' extras use str methods. repr (str(n), print) has no format spec, so it calls the plain
+# formatter: the extras are compiled only for a format spec, which saves about 0.5 s per UDF that converts a number to
+# a string. The barebones stdlib of Codon's type tests has no str methods; there the extras are left out statically.
+
 @extend
 class int:
+    def __repr__(self) -> str:
+        return _int_format(self, "")
+
     def __format__(self, format_spec: str) -> str:
+        if not hasattr(str, "endswith"):
+            return _int_format(self, format_spec)
         spec, percent, underscore = _nes_spec_extras(format_spec)
         if percent:
             return float(self).__format__(format_spec)
-        err = False
-        ret = _C.seq_str_int(self, _python_to_fmt_format(spec), __ptr__(err))
-        if spec and err:
-            _format_error(ret)
+        ret = _int_format(self, spec)
         return ret.replace(",", "_") if underscore else ret
 
 @extend
@@ -144,14 +166,14 @@ class UInt:
 
 @extend
 class float:
+    def __repr__(self) -> str:
+        return _float_format(self, "")
+
     def __format__(self, format_spec: str) -> str:
+        if not hasattr(str, "endswith"):
+            return _float_format(self, format_spec)
         spec, percent, underscore = _nes_spec_extras(format_spec)
-        err = False
-        ret = _C.seq_str_float(self * 100.0 if percent else self, _python_to_fmt_format(spec), __ptr__(err))
-        if spec and err:
-            _format_error(ret)
-        if ret == "-nan":
-            ret = "nan"
+        ret = _float_format(self * 100.0 if percent else self, spec)
         if underscore:
             ret = ret.replace(",", "_")
         # ponytail: the '%' is appended after padding, so a width counts one character less than in CPython.
