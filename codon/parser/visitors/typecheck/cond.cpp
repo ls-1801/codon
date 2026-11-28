@@ -68,13 +68,15 @@ void TypecheckVisitor::visit(IfExpr *expr) {
         [&]() -> Expr * { return nullptr; });
     // NES: in a Python file, the value of an if expression is an ordinary value, as in the dynamic path below. A static
     // result type (a string literal as the chosen branch) would not unify with the kind that an earlier pass assumed
-    // (`"!" if x is None else "?"`, where `x is None` becomes static only after x is typed).
-    if (resultExpr && inPythonFile() && resultExpr->getType()->getStatic())
+    // (`"!" if x is None else "?"`, where `x is None` becomes static only after x is typed). In a type argument
+    // (`Num[A if A > 3 else B]`) the value must stay static.
+    bool nesDynamic = inPythonFile() && !ctx->nesTypeDepth;
+    if (resultExpr && nesDynamic && resultExpr->getType()->getStatic())
       resultExpr->setType(
           resultExpr->getType()->getStatic()->getNonStaticType()->shared_from_this());
     if (resultExpr)
       unify(expr->getType(), resultExpr->getType());
-    else if (inPythonFile())
+    else if (nesDynamic)
       ; // NES: the kind of the result is not known before the condition is (see above).
     else if (expr->getType()->getUnbound())
       expr->getType()->getUnbound()->staticKind = LiteralKind::Int; // determine later!

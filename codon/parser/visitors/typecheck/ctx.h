@@ -204,6 +204,8 @@ struct TypeContext : public Context<TypecheckItem> {
   bool autoPython = false;
   /// True if no side-effects allowed
   bool simpleTypes = false;
+  /// NES: depth of transformType calls; an if expression in a type (`Num[A if A > 3 else B]`) stays static.
+  int nesTypeDepth = 0;
 
   std::unordered_map<std::string, size_t> globalShadows;
 

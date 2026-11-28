@@ -307,7 +307,14 @@ Expr *TypecheckVisitor::transformType(Expr *expr, bool simple) {
   }
   if (simple != ctx->simpleTypes)
     std::swap(ctx->simpleTypes, simple);
-  expr = transform(expr);
+  {
+    struct Depth {
+      int &d;
+      explicit Depth(int &d) : d(d) { d++; }
+      ~Depth() { d--; }
+    } depth(ctx->nesTypeDepth);
+    expr = transform(expr);
+  }
   if (simple != ctx->simpleTypes)
     std::swap(ctx->simpleTypes, simple);
   if (expr) {
